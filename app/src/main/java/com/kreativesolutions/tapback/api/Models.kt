@@ -48,6 +48,8 @@ data class AlertLog(
 data class ScheduleItem(
     val id: String,
     val pairId: String,
+    val receiverId: String?,
+    val receiverName: String,
     val hour: Int,
     val minute: Int,
     val timezone: String,

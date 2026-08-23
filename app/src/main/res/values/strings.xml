@@ -36,7 +36,10 @@
     <string name="day_thu">T</string>
     <string name="day_fri">F</string>
     <string name="day_sat">S</string>
-    <string name="schedule_body">Works like an alarm: pick a time and the days it should fire. The server sends it even if this phone is off.</string>
+    <string name="schedule_body">Works like an alarm: pick who it is for, a time, and the days it should fire. The server sends it even if this phone is off.</string>
+    <string name="schedule_for">Send to</string>
+    <string name="schedule_everyone">Everyone</string>
+    <string name="schedule_for_person">For %1$s</string>
     <string name="add_schedule">Add alarm</string>
     <string name="hour">Hour</string>
     <string name="minute">Minute</string>

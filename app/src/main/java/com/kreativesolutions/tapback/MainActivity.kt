@@ -95,6 +95,7 @@ private fun TapBackAppScreen(viewModel: MainViewModel) {
     var joinCode by remember { mutableStateOf("") }
     var apiDraft by remember { mutableStateOf(state.apiBaseUrl) }
     var selectedDays by remember { mutableStateOf((0..6).toSet()) }
+    var selectedTarget by remember { mutableStateOf<String?>(null) }
     var showAlarmPicker by remember { mutableStateOf(false) }
 
     LaunchedEffect(state.displayName) {
@@ -102,6 +103,12 @@ private fun TapBackAppScreen(viewModel: MainViewModel) {
     }
     LaunchedEffect(state.apiBaseUrl) {
         if (apiDraft.isBlank()) apiDraft = state.apiBaseUrl
+    }
+    LaunchedEffect(state.members) {
+        val stillValid = selectedTarget == "*" || state.members.any { it.id == selectedTarget }
+        if (!stillValid) {
+            selectedTarget = state.members.firstOrNull()?.id
+        }
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -179,7 +186,9 @@ private fun TapBackAppScreen(viewModel: MainViewModel) {
             LogCard(alerts = state.alerts, deviceId = state.deviceId)
             ScheduleCard(
                 schedules = state.schedules,
+                members = state.members,
                 selectedDays = selectedDays,
+                selectedTarget = selectedTarget,
                 onToggleDay = { day ->
                     selectedDays = if (selectedDays.contains(day)) {
                         selectedDays - day
@@ -187,6 +196,7 @@ private fun TapBackAppScreen(viewModel: MainViewModel) {
                         selectedDays + day
                     }
                 },
+                onSelectTarget = { selectedTarget = it },
                 busy = state.busy,
                 onAdd = { showAlarmPicker = true },
                 onToggle = { item, enabled -> viewModel.toggleSchedule(item, enabled) },
@@ -196,7 +206,7 @@ private fun TapBackAppScreen(viewModel: MainViewModel) {
                 AlarmPickerDialog(
                     onDismiss = { showAlarmPicker = false },
                     onConfirm = { hour, minute ->
-                        viewModel.addSchedule(hour, minute, selectedDays.sorted())
+                        viewModel.addSchedule(hour, minute, selectedDays.sorted(), selectedTarget)
                         showAlarmPicker = false
                     }
                 )
@@ -417,8 +427,11 @@ private fun LogCard(alerts: List<AlertLog>, deviceId: String) {
 @Composable
 private fun ScheduleCard(
     schedules: List<ScheduleItem>,
+    members: List<Member>,
     selectedDays: Set<Int>,
+    selectedTarget: String?,
     onToggleDay: (Int) -> Unit,
+    onSelectTarget: (String) -> Unit,
     busy: Boolean,
     onAdd: () -> Unit,
     onToggle: (ScheduleItem, Boolean) -> Unit,
@@ -429,6 +442,33 @@ private fun ScheduleCard(
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(stringResource(R.string.schedule_title), fontWeight = FontWeight.SemiBold)
             Text(stringResource(R.string.schedule_body), style = MaterialTheme.typography.bodyMedium)
+            Text(stringResource(R.string.schedule_for), fontWeight = FontWeight.Medium)
+            TextButton(
+                onClick = { onSelectTarget("*") }
+            ) {
+                Text(
+                    text = stringResource(R.string.schedule_everyone),
+                    fontWeight = if (selectedTarget == "*") FontWeight.Bold else FontWeight.Normal,
+                    color = if (selectedTarget == "*") {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
+                    }
+                )
+            }
+            members.forEach { member ->
+                TextButton(onClick = { onSelectTarget(member.id) }) {
+                    Text(
+                        text = member.displayName,
+                        fontWeight = if (selectedTarget == member.id) FontWeight.Bold else FontWeight.Normal,
+                        color = if (selectedTarget == member.id) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
+                        }
+                    )
+                }
+            }
             Text(stringResource(R.string.repeat), fontWeight = FontWeight.Medium)
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -449,17 +489,31 @@ private fun ScheduleCard(
                     }
                 }
             }
-            Button(onClick = onAdd, enabled = !busy && selectedDays.isNotEmpty(), modifier = Modifier.fillMaxWidth()) {
+            Button(
+                onClick = onAdd,
+                enabled = !busy && selectedDays.isNotEmpty() && selectedTarget != null && members.isNotEmpty(),
+                modifier = Modifier.fillMaxWidth()
+            ) {
                 Text(stringResource(R.string.set_alarm))
             }
             schedules.forEach { item ->
+                val who = if (item.receiverId.isNullOrBlank()) {
+                    stringResource(R.string.schedule_everyone)
+                } else {
+                    item.receiverName.ifBlank {
+                        members.find { it.id == item.receiverId }?.displayName.orEmpty()
+                    }.ifBlank { stringResource(R.string.schedule_everyone) }
+                }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(formatAlarmTime(item.hour, item.minute), fontWeight = FontWeight.SemiBold)
-                        Text(repeatLabel(item.days), style = MaterialTheme.typography.bodySmall)
+                        Text(
+                            "${repeatLabel(item.days)} · ${stringResource(R.string.schedule_for_person, who)}",
+                            style = MaterialTheme.typography.bodySmall
+                        )
                     }
                     Switch(checked = item.enabled, onCheckedChange = { onToggle(item, it) })
                     TextButton(onClick = { onRemove(item) }) {

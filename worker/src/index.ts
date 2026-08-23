@@ -338,13 +338,16 @@ async function ackAlert(env: Env, device: DeviceRow, alertId: string): Promise<R
 }
 
 async function listSchedules(env: Env, device: DeviceRow): Promise<Response> {
+  const group = await findGroup(env, device.id);
+  const members = group ? await listMembers(env, group.id) : [];
+  const names = nameMap(members);
   const rows = await env.DB.prepare(
     `SELECT * FROM schedules WHERE sender_id = ? OR receiver_id = ? OR (pair_id IN (SELECT group_id FROM group_members WHERE device_id = ?) AND receiver_id = ?)
      ORDER BY hour, minute`
   )
     .bind(device.id, device.id, device.id, EVERYONE)
     .all<ScheduleRow>();
-  return json({ schedules: (rows.results || []).map(serializeSchedule) });
+  return json({ schedules: (rows.results || []).map((row) => serializeSchedule(row, names)) });
 }
 
 async function createSchedule(request: Request, env: Env, device: DeviceRow): Promise<Response> {
@@ -357,6 +360,12 @@ async function createSchedule(request: Request, env: Env, device: DeviceRow): Pr
   const timezone = String(body.timezone || "UTC");
   const days = Array.isArray(body.days) ? body.days.map(Number) : [0, 1, 2, 3, 4, 5, 6];
   const receiverId = body.receiverId ? String(body.receiverId) : EVERYONE;
+  if (receiverId !== EVERYONE) {
+    const members = await listMembers(env, group.id);
+    if (!members.some((member) => member.id === receiverId && member.id !== device.id)) {
+      throw new Error("Pick someone in your family.");
+    }
+  }
   const id = crypto.randomUUID();
   await env.DB.prepare(
     `INSERT INTO schedules
@@ -368,7 +377,8 @@ async function createSchedule(request: Request, env: Env, device: DeviceRow): Pr
   const row = await env.DB.prepare(`SELECT * FROM schedules WHERE id = ?`)
     .bind(id)
     .first<ScheduleRow>();
-  return json({ schedule: serializeSchedule(row!) });
+  const members = await listMembers(env, group.id);
+  return json({ schedule: serializeSchedule(row!, nameMap(members)) });
 }
 
 async function updateSchedule(
@@ -602,12 +612,14 @@ function serializeAlert(row: AlertRow, names: Record<string, string> = {}) {
   };
 }
 
-function serializeSchedule(row: ScheduleRow) {
+function serializeSchedule(row: ScheduleRow, names: Record<string, string> = {}) {
+  const everyone = row.receiver_id === EVERYONE;
   return {
     id: row.id,
     pairId: row.pair_id,
     groupId: row.pair_id,
-    receiverId: row.receiver_id === EVERYONE ? null : row.receiver_id,
+    receiverId: everyone ? null : row.receiver_id,
+    receiverName: everyone ? "" : names[row.receiver_id] || "",
     hour: row.hour,
     minute: row.minute,
     timezone: row.timezone,

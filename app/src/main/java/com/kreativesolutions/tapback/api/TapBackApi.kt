@@ -122,7 +122,8 @@ class TapBackApi(
         hour: Int,
         minute: Int,
         timezone: String,
-        days: List<Int>
+        days: List<Int>,
+        receiverId: String? = null
     ): ScheduleItem = withContext(Dispatchers.IO) {
         val body = JSONObject()
             .put("pairId", pairId)
@@ -131,6 +132,7 @@ class TapBackApi(
             .put("minute", minute)
             .put("timezone", timezone)
             .put("days", JSONArray(days))
+        if (!receiverId.isNullOrBlank()) body.put("receiverId", receiverId)
         val json = post(baseUrl, "/v1/schedules", body, auth)
         parseSchedule(json.getJSONObject("schedule"))
     }
@@ -211,7 +213,9 @@ class TapBackApi(
         }
         return ScheduleItem(
             id = json.getString("id"),
-            pairId = json.getString("pairId"),
+            pairId = json.optString("groupId").ifBlank { json.getString("pairId") },
+            receiverId = json.optString("receiverId").takeIf { it.isNotBlank() && it != "null" },
+            receiverName = json.optString("receiverName"),
             hour = json.getInt("hour"),
             minute = json.getInt("minute"),
             timezone = json.getString("timezone"),

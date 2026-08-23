@@ -13,7 +13,7 @@ https://github.com/beanbr173/tap-back/releases/latest/download/tap-back.apk
 4. Their phones show a popup. Tapping it means "I'm here."
 5. You get a notification that they tapped back.
 6. Everyone keeps a log: sent, received, and acknowledged.
-7. Optional: a scheduled check-in, fired by the server even if the sender's phone is off.
+7. Optional: a scheduled check-in for one person (or everyone), fired by the server even if the sender's phone is off.
 
 ## Hosting — this can stay free
 

@@ -132,11 +132,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun addSchedule(hour: Int, minute: Int, days: List<Int>) {
+    fun addSchedule(hour: Int, minute: Int, days: List<Int>, receiverId: String?) {
         runAction {
             val groupId = _state.value.pairId
             require(groupId.isNotBlank()) { "Connect with your family first." }
             require(days.isNotEmpty()) { "Pick at least one day." }
+            require(!receiverId.isNullOrBlank()) { "Pick who this alarm is for." }
             api.createSchedule(
                 baseUrl = requireBaseUrl(),
                 auth = requireSession(),
@@ -144,7 +145,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 hour = hour,
                 minute = minute,
                 timezone = TimeZone.getDefault().id,
-                days = days
+                days = days,
+                receiverId = receiverId
             )
             refreshNow()
         }
