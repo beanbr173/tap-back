@@ -7,9 +7,24 @@ CREATE TABLE IF NOT EXISTS devices (
   updated_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS groups (
+  id TEXT PRIMARY KEY,
+  created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS group_members (
+  group_id TEXT NOT NULL,
+  device_id TEXT NOT NULL,
+  joined_at INTEGER NOT NULL,
+  PRIMARY KEY (group_id, device_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_members_device ON group_members(device_id);
+
 CREATE TABLE IF NOT EXISTS invites (
   code TEXT PRIMARY KEY,
   creator_id TEXT NOT NULL,
+  group_id TEXT,
   created_at INTEGER NOT NULL,
   expires_at INTEGER NOT NULL,
   used_at INTEGER

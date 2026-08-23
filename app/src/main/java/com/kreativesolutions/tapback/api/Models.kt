@@ -6,6 +6,17 @@ data class DeviceSession(
     val displayName: String
 )
 
+data class Member(
+    val id: String,
+    val displayName: String
+)
+
+data class GroupInfo(
+    val groupId: String,
+    val inviteCode: String,
+    val members: List<Member>
+)
+
 data class PairInfo(
     val pairId: String,
     val partnerId: String,
@@ -15,6 +26,7 @@ data class PairInfo(
 data class MeSnapshot(
     val deviceId: String,
     val displayName: String,
+    val group: GroupInfo?,
     val pair: PairInfo?
 )
 
@@ -23,6 +35,8 @@ data class AlertLog(
     val pairId: String,
     val senderId: String,
     val receiverId: String,
+    val senderName: String,
+    val receiverName: String,
     val kind: String,
     val sentAt: Long,
     val receivedAt: Long?,

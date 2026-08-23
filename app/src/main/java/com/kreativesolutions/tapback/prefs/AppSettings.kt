@@ -59,10 +59,14 @@ class AppSettings(private val context: Context) {
     }
 
     suspend fun setPair(pairId: String, partnerName: String) {
+        setGroup(pairId, partnerName, inviteCode = null)
+    }
+
+    suspend fun setGroup(groupId: String, partnerName: String, inviteCode: String?) {
         context.tapBackStore.edit { prefs ->
-            prefs[KEY_PAIR_ID] = pairId
+            prefs[KEY_PAIR_ID] = groupId
             prefs[KEY_PARTNER_NAME] = partnerName
-            prefs.remove(KEY_INVITE_CODE)
+            if (!inviteCode.isNullOrBlank()) prefs[KEY_INVITE_CODE] = inviteCode
         }
     }
 

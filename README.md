@@ -1,19 +1,19 @@
 # TapBack
 
-A simple Android check-in app: send a ping to someone you care about. They tap the popup on their phone. You get notified that they tapped back. No texts, no location sharing — just ping / pong.
+A simple Android check-in app: send a ping to the people you care about. They tap the popup on their phone. You get notified that they tapped back. No texts, no location sharing — just ping / pong.
 
 **Permanent download link (always latest):**  
 https://github.com/beanbr173/tap-back/releases/latest/download/tap-back.apk
 
 ## How it works
 
-1. Both people install TapBack.
-2. One person creates a short code; the other enters it.
-3. Either of you taps **Send check-in**.
-4. The other phone shows a popup. Tapping it means "I'm here."
-5. The sender gets a notification that they tapped back.
-6. Both phones keep a log: sent, received, and acknowledged.
-7. Optional: a daily scheduled check-in, fired by the server even if the sender's phone is off.
+1. Everyone installs TapBack.
+2. One person creates a family code. Mom, a sister, anyone else — they all enter the **same** code. There is no limit on how many people can join.
+3. Tap **Check in with everyone**, or check in with one person.
+4. Their phones show a popup. Tapping it means "I'm here."
+5. You get a notification that they tapped back.
+6. Everyone keeps a log: sent, received, and acknowledged.
+7. Optional: a scheduled check-in, fired by the server even if the sender's phone is off.
 
 ## Hosting — this can stay free
 
@@ -82,7 +82,7 @@ Manual run: **Actions → Build APK → Run workflow**.
 
 1. Download [tap-back.apk](https://github.com/beanbr173/tap-back/releases/latest/download/tap-back.apk) on an Android 10+ phone.
 2. Allow installs from your browser or file app if prompted.
-3. Paste the Worker URL, enter your name, and pair with a code.
+3. Paste the Worker URL, enter your name, and join with a family code.
 
 ## Browser preview
 

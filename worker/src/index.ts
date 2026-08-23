@@ -8,10 +8,8 @@ interface DeviceRow {
   fcm_token: string | null;
 }
 
-interface PairRow {
+interface GroupRow {
   id: string;
-  device_a: string;
-  device_b: string;
 }
 
 interface AlertRow {
@@ -37,6 +35,14 @@ interface ScheduleRow {
   enabled: number;
   last_fired_date: string | null;
 }
+
+interface MemberRow {
+  id: string;
+  display_name: string;
+  fcm_token: string | null;
+}
+
+const EVERYONE = "*";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -89,8 +95,8 @@ async function route(request: Request, env: Env, path: string): Promise<Response
   if (request.method === "POST" && path === "/v1/invites/join") {
     return joinInvite(request, env, device);
   }
-  if (request.method === "DELETE" && path === "/v1/pairs/me") {
-    return unlink(env, device);
+  if (request.method === "DELETE" && (path === "/v1/pairs/me" || path === "/v1/groups/me")) {
+    return leaveGroup(env, device);
   }
   if (request.method === "POST" && path === "/v1/alerts") {
     return createAlert(request, env, device, "manual");
@@ -151,68 +157,94 @@ async function updateDevice(request: Request, env: Env, device: DeviceRow): Prom
 }
 
 async function getMe(env: Env, device: DeviceRow): Promise<Response> {
-  const pair = await findPair(env, device.id);
+  const group = await serializeGroup(env, device.id);
+  const others = group?.members ?? [];
+  const first = others[0];
   return json({
     device: { id: device.id, displayName: device.display_name },
-    pair: pair ? await serializePair(env, pair, device.id) : null,
+    group,
+    pair: group && first
+      ? { id: group.id, partnerId: first.id, partnerName: first.displayName }
+      : null,
   });
 }
 
 async function createInvite(env: Env, device: DeviceRow): Promise<Response> {
-  if (await findPair(env, device.id)) {
-    throw new Error("Already connected with someone. Unlink first.");
+  const group = await ensureGroup(env, device.id);
+  const existing = await env.DB.prepare(
+    `SELECT code, expires_at FROM invites
+     WHERE group_id = ? AND (used_at IS NULL) AND expires_at > ?
+     ORDER BY created_at DESC LIMIT 1`
+  )
+    .bind(group.id, Date.now())
+    .first<{ code: string; expires_at: number }>();
+  if (existing) {
+    return json({ code: existing.code, expiresAt: existing.expires_at });
   }
   const code = randomCode();
   const now = Date.now();
-  await env.DB.prepare(`DELETE FROM invites WHERE creator_id = ? AND used_at IS NULL`)
-    .bind(device.id)
-    .run();
+  const expiresAt = now + 90 * 24 * 60 * 60 * 1000;
   await env.DB.prepare(
-    `INSERT INTO invites (code, creator_id, created_at, expires_at) VALUES (?, ?, ?, ?)`
+    `INSERT INTO invites (code, creator_id, group_id, created_at, expires_at) VALUES (?, ?, ?, ?, ?)`
   )
-    .bind(code, device.id, now, now + 24 * 60 * 60 * 1000)
+    .bind(code, device.id, group.id, now, expiresAt)
     .run();
-  return json({ code, expiresAt: now + 24 * 60 * 60 * 1000 });
+  return json({ code, expiresAt });
 }
 
 async function joinInvite(request: Request, env: Env, device: DeviceRow): Promise<Response> {
-  if (await findPair(env, device.id)) {
-    throw new Error("Already connected with someone. Unlink first.");
-  }
   const body = await readJson(request);
   const code = String(body.code || "").trim().toUpperCase();
   const invite = await env.DB.prepare(
-    `SELECT code, creator_id, expires_at, used_at FROM invites WHERE code = ?`
+    `SELECT code, creator_id, group_id, expires_at FROM invites WHERE code = ?`
   )
     .bind(code)
-    .first<{ code: string; creator_id: string; expires_at: number; used_at: number | null }>();
+    .first<{ code: string; creator_id: string; group_id: string | null; expires_at: number }>();
   if (!invite) throw new Error("That code was not found.");
-  if (invite.used_at) throw new Error("That code was already used.");
   if (invite.expires_at < Date.now()) throw new Error("That code expired. Ask for a new one.");
   if (invite.creator_id === device.id) throw new Error("You cannot join your own code.");
-  if (await findPair(env, invite.creator_id)) {
-    throw new Error("The other person is already connected with someone.");
+
+  let groupId = invite.group_id;
+  if (!groupId) {
+    groupId = (await ensureGroup(env, invite.creator_id)).id;
+    await env.DB.prepare(`UPDATE invites SET group_id = ? WHERE code = ?`).bind(groupId, code).run();
   }
 
-  const pairId = crypto.randomUUID();
-  const [a, b] = [invite.creator_id, device.id].sort();
-  await env.DB.batch([
-    env.DB.prepare(
-      `INSERT INTO pairs (id, device_a, device_b, created_at) VALUES (?, ?, ?, ?)`
-    ).bind(pairId, a, b, Date.now()),
-    env.DB.prepare(`UPDATE invites SET used_at = ? WHERE code = ?`).bind(Date.now(), code),
-  ]);
-  const pair = (await findPair(env, device.id))!;
-  return json({ pair: await serializePair(env, pair, device.id) });
+  const current = await findGroup(env, device.id);
+  if (current && current.id !== groupId) {
+    throw new Error("You are already in a family. Leave it first to join another.");
+  }
+  if (!current) {
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO group_members (group_id, device_id, joined_at) VALUES (?, ?, ?)`
+    )
+      .bind(groupId, device.id, Date.now())
+      .run();
+  }
+  const group = await serializeGroup(env, device.id);
+  return json({ group, pair: legacyPair(group) });
 }
 
-async function unlink(env: Env, device: DeviceRow): Promise<Response> {
+async function leaveGroup(env: Env, device: DeviceRow): Promise<Response> {
+  const group = await findGroup(env, device.id);
+  await env.DB.prepare(`DELETE FROM group_members WHERE device_id = ?`).bind(device.id).run();
   await env.DB.prepare(`DELETE FROM pairs WHERE device_a = ? OR device_b = ?`)
     .bind(device.id, device.id)
     .run();
   await env.DB.prepare(`DELETE FROM schedules WHERE sender_id = ? OR receiver_id = ?`)
     .bind(device.id, device.id)
     .run();
+  if (group) {
+    const remaining = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM group_members WHERE group_id = ?`
+    )
+      .bind(group.id)
+      .first<{ n: number }>();
+    if (!remaining || remaining.n === 0) {
+      await env.DB.prepare(`DELETE FROM groups WHERE id = ?`).bind(group.id).run();
+      await env.DB.prepare(`DELETE FROM invites WHERE group_id = ?`).bind(group.id).run();
+    }
+  }
   return json({ ok: true });
 }
 
@@ -223,23 +255,39 @@ async function createAlert(
   kind: string
 ): Promise<Response> {
   const body = await readJson(request);
-  const pairId = String(body.pairId || "");
-  const pair = await findPair(env, device.id);
-  if (!pair || pair.id !== pairId) throw new Error("You are not connected on that pair.");
-  const receiverId = partnerId(pair, device.id);
-  const alert = await insertAlert(env, pair.id, device.id, receiverId, kind);
-  const receiver = await getDevice(env, receiverId);
-  await sendFcm(env, receiver?.fcm_token, {
-    type: "ping",
-    alertId: alert.id,
-    fromName: device.display_name,
-    title: `Check-in from ${device.display_name}`,
-    body: "Tap to let them know you're here.",
+  const group = await requireGroup(env, device.id);
+  const groupId = String(body.groupId || body.pairId || group.id);
+  if (groupId !== group.id) throw new Error("You are not in that family.");
+  const members = await listMembers(env, group.id);
+  const requested = body.receiverId ? String(body.receiverId) : "";
+  const targets = members.filter((member) => {
+    if (member.id === device.id) return false;
+    if (requested && requested !== EVERYONE) return member.id === requested;
+    return true;
   });
-  return json({ alert: serializeAlert(alert) });
+  if (targets.length === 0) throw new Error("There is nobody else to check in with yet.");
+
+  const alerts = [];
+  for (const target of targets) {
+    const alert = await insertAlert(env, group.id, device.id, target.id, kind);
+    alerts.push(alert);
+    await sendFcm(env, target.fcm_token, {
+      type: "ping",
+      alertId: alert.id,
+      fromName: device.display_name,
+      title: `Check-in from ${device.display_name}`,
+      body: "Tap to let them know you're here.",
+    });
+  }
+  return json({
+    alert: serializeAlert(alerts[0], nameMap(members)),
+    alerts: alerts.map((row) => serializeAlert(row, nameMap(members))),
+  });
 }
 
 async function listAlerts(env: Env, device: DeviceRow): Promise<Response> {
+  const group = await findGroup(env, device.id);
+  const members = group ? await listMembers(env, group.id) : [];
   const rows = await env.DB.prepare(
     `SELECT * FROM alerts
      WHERE sender_id = ? OR receiver_id = ?
@@ -248,7 +296,8 @@ async function listAlerts(env: Env, device: DeviceRow): Promise<Response> {
   )
     .bind(device.id, device.id)
     .all<AlertRow>();
-  return json({ alerts: (rows.results || []).map(serializeAlert) });
+  const names = nameMap(members);
+  return json({ alerts: (rows.results || []).map((row) => serializeAlert(row, names)) });
 }
 
 async function markReceived(env: Env, device: DeviceRow, alertId: string): Promise<Response> {
@@ -290,42 +339,31 @@ async function ackAlert(env: Env, device: DeviceRow, alertId: string): Promise<R
 
 async function listSchedules(env: Env, device: DeviceRow): Promise<Response> {
   const rows = await env.DB.prepare(
-    `SELECT * FROM schedules WHERE sender_id = ? OR receiver_id = ? ORDER BY hour, minute`
+    `SELECT * FROM schedules WHERE sender_id = ? OR receiver_id = ? OR (pair_id IN (SELECT group_id FROM group_members WHERE device_id = ?) AND receiver_id = ?)
+     ORDER BY hour, minute`
   )
-    .bind(device.id, device.id)
+    .bind(device.id, device.id, device.id, EVERYONE)
     .all<ScheduleRow>();
   return json({ schedules: (rows.results || []).map(serializeSchedule) });
 }
 
 async function createSchedule(request: Request, env: Env, device: DeviceRow): Promise<Response> {
   const body = await readJson(request);
-  const pair = await findPair(env, device.id);
-  if (!pair || pair.id !== String(body.pairId || "")) {
-    throw new Error("You are not connected on that pair.");
-  }
+  const group = await requireGroup(env, device.id);
   const hour = Number(body.hour);
   const minute = Number(body.minute);
   if (!Number.isInteger(hour) || hour < 0 || hour > 23) throw new Error("hour must be 0-23.");
   if (!Number.isInteger(minute) || minute < 0 || minute > 59) throw new Error("minute must be 0-59.");
   const timezone = String(body.timezone || "UTC");
   const days = Array.isArray(body.days) ? body.days.map(Number) : [0, 1, 2, 3, 4, 5, 6];
+  const receiverId = body.receiverId ? String(body.receiverId) : EVERYONE;
   const id = crypto.randomUUID();
   await env.DB.prepare(
     `INSERT INTO schedules
       (id, pair_id, sender_id, receiver_id, hour, minute, timezone, days_mask, enabled, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`
   )
-    .bind(
-      id,
-      pair.id,
-      device.id,
-      partnerId(pair, device.id),
-      hour,
-      minute,
-      timezone,
-      daysToMask(days),
-      Date.now()
-    )
+    .bind(id, group.id, device.id, receiverId, hour, minute, timezone, daysToMask(days), Date.now())
     .run();
   const row = await env.DB.prepare(`SELECT * FROM schedules WHERE id = ?`)
     .bind(id)
@@ -342,7 +380,7 @@ async function updateSchedule(
   const schedule = await env.DB.prepare(`SELECT * FROM schedules WHERE id = ?`)
     .bind(id)
     .first<ScheduleRow>();
-  if (!schedule || (schedule.sender_id !== device.id && schedule.receiver_id !== device.id)) {
+  if (!schedule || (schedule.sender_id !== device.id && schedule.receiver_id !== device.id && schedule.receiver_id !== EVERYONE)) {
     throw new Error("Schedule not found.");
   }
   const body = await readJson(request);
@@ -355,7 +393,7 @@ async function deleteSchedule(env: Env, device: DeviceRow, id: string): Promise<
   const schedule = await env.DB.prepare(`SELECT * FROM schedules WHERE id = ?`)
     .bind(id)
     .first<ScheduleRow>();
-  if (!schedule || (schedule.sender_id !== device.id && schedule.receiver_id !== device.id)) {
+  if (!schedule || schedule.sender_id !== device.id) {
     throw new Error("Schedule not found.");
   }
   await env.DB.prepare(`DELETE FROM schedules WHERE id = ?`).bind(id).run();
@@ -372,32 +410,34 @@ async function fireDueSchedules(env: Env): Promise<void> {
     if (schedule.last_fired_date === zoned.date) continue;
 
     const sender = await getDevice(env, schedule.sender_id);
-    const receiver = await getDevice(env, schedule.receiver_id);
-    if (!sender || !receiver) continue;
-
-    const alert = await insertAlert(
-      env,
-      schedule.pair_id,
-      schedule.sender_id,
-      schedule.receiver_id,
-      "scheduled"
-    );
+    if (!sender) continue;
+    const members = await listMembers(env, schedule.pair_id);
+    const targets = members.filter((member) => {
+      if (member.id === schedule.sender_id) return false;
+      if (schedule.receiver_id && schedule.receiver_id !== EVERYONE) {
+        return member.id === schedule.receiver_id;
+      }
+      return true;
+    });
+    for (const target of targets) {
+      const alert = await insertAlert(env, schedule.pair_id, schedule.sender_id, target.id, "scheduled");
+      await sendFcm(env, target.fcm_token, {
+        type: "ping",
+        alertId: alert.id,
+        fromName: sender.display_name,
+        title: `Check-in from ${sender.display_name}`,
+        body: "Tap to let them know you're here.",
+      });
+    }
     await env.DB.prepare(`UPDATE schedules SET last_fired_date = ? WHERE id = ?`)
       .bind(zoned.date, schedule.id)
       .run();
-    await sendFcm(env, receiver.fcm_token, {
-      type: "ping",
-      alertId: alert.id,
-      fromName: sender.display_name,
-      title: `Check-in from ${sender.display_name}`,
-      body: "Tap to let them know you're here.",
-    });
   }
 }
 
 async function insertAlert(
   env: Env,
-  pairId: string,
+  groupId: string,
   senderId: string,
   receiverId: string,
   kind: string
@@ -408,11 +448,11 @@ async function insertAlert(
     `INSERT INTO alerts (id, pair_id, sender_id, receiver_id, kind, sent_at)
      VALUES (?, ?, ?, ?, ?, ?)`
   )
-    .bind(id, pairId, senderId, receiverId, kind, now)
+    .bind(id, groupId, senderId, receiverId, kind, now)
     .run();
   return {
     id,
-    pair_id: pairId,
+    pair_id: groupId,
     sender_id: senderId,
     receiver_id: receiverId,
     kind,
@@ -420,6 +460,101 @@ async function insertAlert(
     received_at: null,
     acked_at: null,
   };
+}
+
+async function ensureGroup(env: Env, deviceId: string): Promise<GroupRow> {
+  const existing = await findGroup(env, deviceId);
+  if (existing) return existing;
+  const now = Date.now();
+  const oldPair = await env.DB.prepare(
+    `SELECT id, device_a, device_b, created_at FROM pairs WHERE device_a = ? OR device_b = ?`
+  )
+    .bind(deviceId, deviceId)
+    .first<{ id: string; device_a: string; device_b: string; created_at: number }>();
+  if (oldPair) {
+    await env.DB.prepare(`INSERT OR IGNORE INTO groups (id, created_at) VALUES (?, ?)`).bind(oldPair.id, oldPair.created_at).run();
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO group_members (group_id, device_id, joined_at) VALUES (?, ?, ?)`
+    ).bind(oldPair.id, oldPair.device_a, oldPair.created_at).run();
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO group_members (group_id, device_id, joined_at) VALUES (?, ?, ?)`
+    ).bind(oldPair.id, oldPair.device_b, oldPair.created_at).run();
+    return { id: oldPair.id };
+  }
+  const id = crypto.randomUUID();
+  await env.DB.batch([
+    env.DB.prepare(`INSERT INTO groups (id, created_at) VALUES (?, ?)`).bind(id, now),
+    env.DB.prepare(
+      `INSERT INTO group_members (group_id, device_id, joined_at) VALUES (?, ?, ?)`
+    ).bind(id, deviceId, now),
+  ]);
+  return { id };
+}
+
+async function requireGroup(env: Env, deviceId: string): Promise<GroupRow> {
+  const group = await findGroup(env, deviceId);
+  if (!group) throw new Error("Connect with your family first.");
+  return group;
+}
+
+async function findGroup(env: Env, deviceId: string): Promise<GroupRow | null> {
+  const row = await env.DB.prepare(
+    `SELECT group_id AS id FROM group_members WHERE device_id = ? LIMIT 1`
+  )
+    .bind(deviceId)
+    .first<{ id: string }>();
+  if (row) return row;
+  const pair = await env.DB.prepare(
+    `SELECT id, device_a, device_b, created_at FROM pairs WHERE device_a = ? OR device_b = ?`
+  )
+    .bind(deviceId, deviceId)
+    .first<{ id: string; device_a: string; device_b: string; created_at: number }>();
+  if (!pair) return null;
+  await env.DB.prepare(`INSERT OR IGNORE INTO groups (id, created_at) VALUES (?, ?)`).bind(pair.id, pair.created_at).run();
+  await env.DB.prepare(
+    `INSERT OR IGNORE INTO group_members (group_id, device_id, joined_at) VALUES (?, ?, ?)`
+  ).bind(pair.id, pair.device_a, pair.created_at).run();
+  await env.DB.prepare(
+    `INSERT OR IGNORE INTO group_members (group_id, device_id, joined_at) VALUES (?, ?, ?)`
+  ).bind(pair.id, pair.device_b, pair.created_at).run();
+  return { id: pair.id };
+}
+
+async function listMembers(env: Env, groupId: string): Promise<MemberRow[]> {
+  const rows = await env.DB.prepare(
+    `SELECT d.id, d.display_name, d.fcm_token
+     FROM group_members m
+     JOIN devices d ON d.id = m.device_id
+     WHERE m.group_id = ?
+     ORDER BY d.display_name`
+  )
+    .bind(groupId)
+    .all<MemberRow>();
+  return rows.results || [];
+}
+
+async function serializeGroup(env: Env, deviceId: string) {
+  const group = await findGroup(env, deviceId);
+  if (!group) return null;
+  const members = await listMembers(env, group.id);
+  const invite = await env.DB.prepare(
+    `SELECT code FROM invites WHERE group_id = ? AND expires_at > ? ORDER BY created_at DESC LIMIT 1`
+  )
+    .bind(group.id, Date.now())
+    .first<{ code: string }>();
+  return {
+    id: group.id,
+    inviteCode: invite?.code || "",
+    members: members
+      .filter((member) => member.id !== deviceId)
+      .map((member) => ({ id: member.id, displayName: member.display_name })),
+  };
+}
+
+function legacyPair(group: Awaited<ReturnType<typeof serializeGroup>>) {
+  const first = group?.members[0];
+  if (!group || !first) return null;
+  return { id: group.id, partnerId: first.id, partnerName: first.displayName };
 }
 
 async function requireDevice(request: Request, env: Env): Promise<DeviceRow> {
@@ -445,32 +580,21 @@ async function getAlert(env: Env, id: string): Promise<AlertRow | null> {
   return env.DB.prepare(`SELECT * FROM alerts WHERE id = ?`).bind(id).first<AlertRow>();
 }
 
-async function findPair(env: Env, deviceId: string): Promise<PairRow | null> {
-  return env.DB.prepare(`SELECT id, device_a, device_b FROM pairs WHERE device_a = ? OR device_b = ?`)
-    .bind(deviceId, deviceId)
-    .first<PairRow>();
+function nameMap(members: MemberRow[]): Record<string, string> {
+  const map: Record<string, string> = {};
+  for (const member of members) map[member.id] = member.display_name;
+  return map;
 }
 
-async function serializePair(env: Env, pair: PairRow, selfId: string) {
-  const otherId = partnerId(pair, selfId);
-  const other = await getDevice(env, otherId);
-  return {
-    id: pair.id,
-    partnerId: otherId,
-    partnerName: other?.display_name || "Partner",
-  };
-}
-
-function partnerId(pair: PairRow, selfId: string): string {
-  return pair.device_a === selfId ? pair.device_b : pair.device_a;
-}
-
-function serializeAlert(row: AlertRow) {
+function serializeAlert(row: AlertRow, names: Record<string, string> = {}) {
   return {
     id: row.id,
     pairId: row.pair_id,
+    groupId: row.pair_id,
     senderId: row.sender_id,
     receiverId: row.receiver_id,
+    senderName: names[row.sender_id] || "",
+    receiverName: names[row.receiver_id] || "",
     kind: row.kind,
     sentAt: row.sent_at,
     receivedAt: row.received_at,
@@ -482,6 +606,8 @@ function serializeSchedule(row: ScheduleRow) {
   return {
     id: row.id,
     pairId: row.pair_id,
+    groupId: row.pair_id,
+    receiverId: row.receiver_id === EVERYONE ? null : row.receiver_id,
     hour: row.hour,
     minute: row.minute,
     timezone: row.timezone,

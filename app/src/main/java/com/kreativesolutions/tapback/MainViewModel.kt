@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.kreativesolutions.tapback.api.AlertLog
 import com.kreativesolutions.tapback.api.DeviceSession
+import com.kreativesolutions.tapback.api.Member
 import com.kreativesolutions.tapback.api.ScheduleItem
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -22,6 +23,7 @@ data class TapBackUiState(
     val pairId: String = "",
     val partnerName: String = "",
     val inviteCode: String = "",
+    val members: List<Member> = emptyList(),
     val alerts: List<AlertLog> = emptyList(),
     val schedules: List<ScheduleItem> = emptyList(),
     val busy: Boolean = false,
@@ -101,61 +103,64 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         runAction {
             val invite = api.createInvite(requireBaseUrl(), requireSession())
             settings.setInviteCode(invite.code)
+            refreshNow()
         }
     }
 
     fun joinInvite(code: String) {
         runAction {
-            val pair = api.joinInvite(requireBaseUrl(), requireSession(), code)
-            settings.setPair(pair.pairId, pair.partnerName)
+            val group = api.joinInvite(requireBaseUrl(), requireSession(), code)
+            applyGroup(group.groupId, group.members, group.inviteCode.ifBlank { code.trim().uppercase() })
+            refreshNow()
         }
     }
 
-    fun sendCheckIn() {
+    fun sendCheckIn(receiverId: String? = null) {
         runAction {
-            val pairId = _state.value.pairId
-            require(pairId.isNotBlank()) { "Connect with someone first." }
-            api.sendAlert(requireBaseUrl(), requireSession(), pairId)
-            refresh()
+            val groupId = _state.value.pairId
+            require(groupId.isNotBlank()) { "Connect with your family first." }
+            require(_state.value.members.isNotEmpty()) { "Nobody else has joined yet." }
+            api.sendAlert(requireBaseUrl(), requireSession(), groupId, receiverId)
+            refreshNow()
         }
     }
 
     fun ack(alertId: String) {
         runAction {
             api.ackAlert(requireBaseUrl(), requireSession(), alertId)
-            refresh()
+            refreshNow()
         }
     }
 
     fun addSchedule(hour: Int, minute: Int, days: List<Int>) {
         runAction {
-            val pairId = _state.value.pairId
-            require(pairId.isNotBlank()) { "Connect with someone first." }
+            val groupId = _state.value.pairId
+            require(groupId.isNotBlank()) { "Connect with your family first." }
             require(days.isNotEmpty()) { "Pick at least one day." }
             api.createSchedule(
                 baseUrl = requireBaseUrl(),
                 auth = requireSession(),
-                pairId = pairId,
+                pairId = groupId,
                 hour = hour,
                 minute = minute,
                 timezone = TimeZone.getDefault().id,
                 days = days
             )
-            refresh()
+            refreshNow()
         }
     }
 
     fun toggleSchedule(item: ScheduleItem, enabled: Boolean) {
         runAction {
             api.setScheduleEnabled(requireBaseUrl(), requireSession(), item.id, enabled)
-            refresh()
+            refreshNow()
         }
     }
 
     fun removeSchedule(item: ScheduleItem) {
         runAction {
             api.deleteSchedule(requireBaseUrl(), requireSession(), item.id)
-            refresh()
+            refreshNow()
         }
     }
 
@@ -163,7 +168,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         runAction {
             runCatching { api.unlink(requireBaseUrl(), requireSession()) }
             settings.clearPair()
-            _state.value = _state.value.copy(alerts = emptyList(), schedules = emptyList())
+            _state.value = _state.value.copy(
+                members = emptyList(),
+                alerts = emptyList(),
+                schedules = emptyList()
+            )
         }
     }
 
@@ -193,12 +202,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val baseUrl = settings.apiBaseUrl.first()
         if (baseUrl.isBlank()) return
         val me = api.me(baseUrl, session)
-        if (me.pair != null) {
-            settings.setPair(me.pair.pairId, me.pair.partnerName)
+        if (me.group != null) {
+            applyGroup(me.group.groupId, me.group.members, me.group.inviteCode)
         }
         val alerts = api.listAlerts(baseUrl, session)
         val schedules = runCatching { api.listSchedules(baseUrl, session) }.getOrDefault(emptyList())
         _state.value = _state.value.copy(alerts = alerts, schedules = schedules, error = null)
+    }
+
+    private suspend fun applyGroup(groupId: String, members: List<Member>, inviteCode: String) {
+        val names = members.joinToString(", ") { it.displayName }.ifBlank { "your family" }
+        settings.setGroup(groupId, names, inviteCode.ifBlank { null })
+        _state.value = _state.value.copy(members = members)
     }
 
     private fun runAction(block: suspend () -> Unit) {

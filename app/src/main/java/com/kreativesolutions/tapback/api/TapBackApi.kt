@@ -54,7 +54,7 @@ class TapBackApi(
             )
         }
 
-    suspend fun joinInvite(baseUrl: String, auth: DeviceSession, code: String): PairInfo =
+    suspend fun joinInvite(baseUrl: String, auth: DeviceSession, code: String): GroupInfo =
         withContext(Dispatchers.IO) {
             val json = post(
                 baseUrl,
@@ -62,30 +62,35 @@ class TapBackApi(
                 JSONObject().put("code", code.trim().uppercase()),
                 auth
             )
-            parsePair(json.getJSONObject("pair"))
+            json.optJSONObject("group")?.let { parseGroup(it) }
+                ?: json.optJSONObject("pair")?.let { pairToGroup(it) }
+                ?: error("Join did not return a family.")
         }
 
     suspend fun me(baseUrl: String, auth: DeviceSession): MeSnapshot =
         withContext(Dispatchers.IO) {
             val json = get(baseUrl, "/v1/me", auth)
+            val groupObj = json.optJSONObject("group")
             val pairObj = json.optJSONObject("pair")
             MeSnapshot(
                 deviceId = json.getJSONObject("device").getString("id"),
                 displayName = json.getJSONObject("device").getString("displayName"),
+                group = groupObj?.let { parseGroup(it) } ?: pairObj?.let { pairToGroup(it) },
                 pair = pairObj?.let { parsePair(it) }
             )
         }
 
-    suspend fun sendAlert(baseUrl: String, auth: DeviceSession, pairId: String): AlertLog =
-        withContext(Dispatchers.IO) {
-            val json = post(
-                baseUrl,
-                "/v1/alerts",
-                JSONObject().put("pairId", pairId),
-                auth
-            )
-            parseAlert(json.getJSONObject("alert"))
-        }
+    suspend fun sendAlert(
+        baseUrl: String,
+        auth: DeviceSession,
+        groupId: String,
+        receiverId: String? = null
+    ): AlertLog = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("groupId", groupId).put("pairId", groupId)
+        if (!receiverId.isNullOrBlank()) body.put("receiverId", receiverId)
+        val json = post(baseUrl, "/v1/alerts", body, auth)
+        parseAlert(json.getJSONObject("alert"))
+    }
 
     suspend fun markReceived(baseUrl: String, auth: DeviceSession, alertId: String) =
         withContext(Dispatchers.IO) {
@@ -121,6 +126,7 @@ class TapBackApi(
     ): ScheduleItem = withContext(Dispatchers.IO) {
         val body = JSONObject()
             .put("pairId", pairId)
+            .put("groupId", pairId)
             .put("hour", hour)
             .put("minute", minute)
             .put("timezone", timezone)
@@ -158,11 +164,36 @@ class TapBackApi(
         partnerName = json.getString("partnerName")
     )
 
+    private fun pairToGroup(json: JSONObject) = GroupInfo(
+        groupId = json.getString("id"),
+        inviteCode = "",
+        members = listOf(
+            Member(id = json.getString("partnerId"), displayName = json.getString("partnerName"))
+        )
+    )
+
+    private fun parseGroup(json: JSONObject): GroupInfo {
+        val membersJson = json.optJSONArray("members") ?: JSONArray()
+        val members = buildList {
+            for (i in 0 until membersJson.length()) {
+                val member = membersJson.getJSONObject(i)
+                add(Member(id = member.getString("id"), displayName = member.getString("displayName")))
+            }
+        }
+        return GroupInfo(
+            groupId = json.getString("id"),
+            inviteCode = json.optString("inviteCode"),
+            members = members
+        )
+    }
+
     private fun parseAlert(json: JSONObject) = AlertLog(
         id = json.getString("id"),
-        pairId = json.getString("pairId"),
+        pairId = json.optString("groupId").ifBlank { json.getString("pairId") },
         senderId = json.getString("senderId"),
         receiverId = json.getString("receiverId"),
+        senderName = json.optString("senderName"),
+        receiverName = json.optString("receiverName"),
         kind = json.getString("kind"),
         sentAt = json.getLong("sentAt"),
         receivedAt = json.optLongOrNull("receivedAt"),

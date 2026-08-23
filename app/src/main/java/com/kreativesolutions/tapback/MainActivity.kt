@@ -45,6 +45,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.kreativesolutions.tapback.api.AlertLog
+import com.kreativesolutions.tapback.api.Member
 import com.kreativesolutions.tapback.api.ScheduleItem
 import com.kreativesolutions.tapback.fcm.TapBackNotifications
 import com.kreativesolutions.tapback.ui.theme.TapBackTheme
@@ -164,11 +165,15 @@ private fun TapBackAppScreen(viewModel: MainViewModel) {
         } else {
             HomeCard(
                 partnerName = state.partnerName,
+                members = state.members,
+                inviteCode = state.inviteCode,
                 outgoing = state.latestOutgoing,
                 incoming = state.latestIncomingUnacked,
                 deviceId = state.deviceId,
                 busy = state.busy,
-                onSend = { viewModel.sendCheckIn() },
+                onSendEveryone = { viewModel.sendCheckIn() },
+                onSendOne = { id -> viewModel.sendCheckIn(id) },
+                onAddSomeone = { viewModel.createInvite() },
                 onAck = { id -> viewModel.ack(id) }
             )
             LogCard(alerts = state.alerts, deviceId = state.deviceId)
@@ -311,25 +316,64 @@ private fun PairCard(
 @Composable
 private fun HomeCard(
     partnerName: String,
+    members: List<Member>,
+    inviteCode: String,
     outgoing: AlertLog?,
     incoming: AlertLog?,
     deviceId: String,
     busy: Boolean,
-    onSend: () -> Unit,
+    onSendEveryone: () -> Unit,
+    onSendOne: (String) -> Unit,
+    onAddSomeone: () -> Unit,
     onAck: (String) -> Unit
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(
-                text = stringResource(R.string.partner_label, partnerName.ifBlank { "your person" }),
+                text = stringResource(
+                    R.string.partner_label,
+                    partnerName.ifBlank { stringResource(R.string.family_label) }
+                ),
                 fontWeight = FontWeight.SemiBold
             )
-            Button(
-                onClick = onSend,
+            if (members.isEmpty()) {
+                Text(stringResource(R.string.nobody_yet), style = MaterialTheme.typography.bodyMedium)
+            } else {
+                members.forEach { member ->
+                    Text("• ${member.displayName}", style = MaterialTheme.typography.bodyMedium)
+                }
+                Button(
+                    onClick = onSendEveryone,
+                    enabled = !busy,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(if (busy) stringResource(R.string.sending) else stringResource(R.string.send_check_in))
+                }
+                members.forEach { member ->
+                    OutlinedButton(
+                        onClick = { onSendOne(member.id) },
+                        enabled = !busy,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(stringResource(R.string.ping_one, member.displayName))
+                    }
+                }
+            }
+            if (inviteCode.isNotBlank()) {
+                Text(stringResource(R.string.family_code), style = MaterialTheme.typography.bodySmall)
+                Text(
+                    text = inviteCode,
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+            OutlinedButton(
+                onClick = onAddSomeone,
                 enabled = !busy,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text(if (busy) stringResource(R.string.sending) else stringResource(R.string.send_check_in))
+                Text(stringResource(R.string.add_someone))
             }
             if (incoming != null) {
                 Text("They checked in on you. Tap to say you're here.")
@@ -466,7 +510,12 @@ private fun repeatLabel(days: List<Int>): String {
 }
 
 private fun statusLine(alert: AlertLog, deviceId: String): String {
-    val role = if (alert.senderId == deviceId) "You sent" else "You received"
+    val other = if (alert.senderId == deviceId) {
+        alert.receiverName.ifBlank { "them" }
+    } else {
+        alert.senderName.ifBlank { "them" }
+    }
+    val role = if (alert.senderId == deviceId) "You sent to $other" else "From $other"
     val kind = if (alert.kind == "scheduled") "scheduled" else "on demand"
     val status = when {
         alert.ackedAt != null -> "tapped back"
