@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.TapBack" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">@color/surface</item>
+        <item name="android:navigationBarColor">@color/surface</item>
+        <item name="android:windowBackground">@color/surface</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+
+    <style name="Theme.TapBack.Overlay" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowIsTranslucent">false</item>
+        <item name="android:windowBackground">@color/overlay_background</item>
+        <item name="android:statusBarColor">@color/overlay_background</item>
+        <item name="android:navigationBarColor">@color/overlay_background</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>

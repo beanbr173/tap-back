@@ -1,0 +1,98 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: |
+          yes | sdkmanager --licenses || true
+          sdkmanager --install "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Restore shared debug keystore
+        uses: actions/cache@v4
+        with:
+          path: signing/ci-debug.keystore
+          key: tap-back-ci-debug-keystore-v1
+
+      - name: Set up shared debug keystore
+        run: |
+          mkdir -p signing
+          if [ ! -f signing/ci-debug.keystore ]; then
+            keytool -genkeypair -v \
+              -keystore signing/ci-debug.keystore \
+              -alias ci-debug \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass android -keypass android \
+              -dname "CN=TapBack, OU=CI, O=MDA, L=Unknown, ST=Unknown, C=US"
+          fi
+          cat > signing/ci-debug.properties <<'EOF'
+          storeFile=ci-debug.keystore
+          storePassword=android
+          keyPassword=android
+          keyAlias=ci-debug
+          EOF
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Build debug APK
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: tap-back-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Read app version
+        if: github.event_name != 'pull_request'
+        id: version
+        run: |
+          VERSION_NAME=$(grep 'versionName' app/build.gradle.kts | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+          echo "name=${VERSION_NAME}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VERSION_NAME}-${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare release APK
+        if: github.event_name != 'pull_request'
+        run: cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/tap-back.apk
+
+      - name: Publish GitHub Release
+        if: github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: TapBack ${{ steps.version.outputs.name }} (build ${{ github.run_number }})
+          body: |
+            Automated debug build from commit ${{ github.sha }}.
+
+            **Permanent download link (always latest):**
+            https://github.com/${{ github.repository }}/releases/latest/download/tap-back.apk
+          files: app/build/outputs/apk/debug/tap-back.apk
+          make_latest: true

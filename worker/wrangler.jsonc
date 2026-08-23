@@ -1,0 +1,22 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tapback-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-01",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "tapback",
+      "database_id": "210d71d3-b7dc-4a57-9763-897b0cfbb972"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "KV",
+      "id": "a6c9981877bc479694dadf4a8aa4f9d8"
+    }
+  ],
+  "triggers": {
+    "crons": ["* * * * *"]
+  }
+}
