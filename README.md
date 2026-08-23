@@ -53,17 +53,21 @@ npx wrangler deploy
 
 Copy the Worker URL (like `https://tapback-api.<your-subdomain>.workers.dev`) into the app's **Server URL** field.
 
-### Firebase secrets (for popups)
+### Firebase (required for lock-screen popups)
 
-In Firebase: Project settings → Service accounts → Generate new private key. Then:
+Do this in a browser. Do not paste keys into chat.
 
-```bash
-npx wrangler secret put FCM_PROJECT_ID
-npx wrangler secret put FCM_CLIENT_EMAIL
-npx wrangler secret put FCM_PRIVATE_KEY
-```
+1. Open [Firebase Console](https://console.firebase.google.com/) and create a project named `tapback`. Google Analytics can be off.
+2. Add an **Android** app with package name **`com.kreativesolutions.tapback`**. Nickname: TapBack. Skip SHA-1.
+3. Download `google-services.json` and save it as:
 
-On the Android side, download `google-services.json` for package `com.kreativesolutions.tapback` and place it at `app/google-services.json` (gitignored). See [`app/google-services.json.example`](app/google-services.json.example). Rebuild the APK after adding it.
+   `D:\working\play_store_apps\tap_back\app\google-services.json`
+
+4. Project settings (gear) → **Service accounts** → **Generate new private key**. Save that JSON as:
+
+   `D:\working\play_store_apps\tap_back\worker\fcm-service-account.json`
+
+Both files are gitignored. After they are on disk, say so in chat and they will be wired into the Worker + GitHub Actions, then a new APK will be built.
 
 ## Cloud build (no Android Studio required)
 
