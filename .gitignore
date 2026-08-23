@@ -13,6 +13,7 @@
 .kotlin/
 app/google-services.json
 worker/fcm-service-account.json
+worker/*firebase-adminsdk*.json
 worker/node_modules/
 worker/.wrangler/
 worker/.dev.vars
