@@ -31,6 +31,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TimePicker
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -40,13 +41,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.kreativesolutions.tapback.api.AlertLog
 import com.kreativesolutions.tapback.api.Member
 import com.kreativesolutions.tapback.api.ScheduleItem
+import com.kreativesolutions.tapback.fcm.AlertSetup
 import com.kreativesolutions.tapback.fcm.TapBackNotifications
 import com.kreativesolutions.tapback.ui.theme.TapBackTheme
 import java.text.DateFormat
@@ -143,6 +148,8 @@ private fun TapBackAppScreen(viewModel: MainViewModel) {
             color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f)
         )
 
+        AlertSetupCard()
+
         if (!state.error.isNullOrBlank()) {
             Text(state.error ?: "", color = MaterialTheme.colorScheme.error)
         }
@@ -225,6 +232,63 @@ private fun TapBackAppScreen(viewModel: MainViewModel) {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f)
         )
+    }
+}
+
+@Composable
+private fun rememberAlertSetup(): AlertSetup {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var setup by remember { mutableStateOf(AlertSetup.snapshot(context)) }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                setup = AlertSetup.snapshot(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    return setup
+}
+
+@Composable
+private fun AlertSetupCard() {
+    val setup = rememberAlertSetup()
+    if (setup.allGood) return
+    val context = LocalContext.current
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(stringResource(R.string.alert_setup_title), fontWeight = FontWeight.SemiBold)
+            Text(
+                stringResource(R.string.alert_setup_body),
+                style = MaterialTheme.typography.bodyMedium
+            )
+            if (!setup.overlayGranted) {
+                Button(
+                    onClick = { AlertSetup.openOverlaySettings(context) },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(stringResource(R.string.alert_setup_overlay))
+                }
+            }
+            if (!setup.fullScreenGranted) {
+                Button(
+                    onClick = { AlertSetup.openFullScreenSettings(context) },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(stringResource(R.string.alert_setup_fullscreen))
+                }
+            }
+            if (!setup.batteryUnrestricted) {
+                OutlinedButton(
+                    onClick = { AlertSetup.openBatterySettings(context) },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(stringResource(R.string.alert_setup_battery))
+                }
+            }
+        }
     }
 }
 

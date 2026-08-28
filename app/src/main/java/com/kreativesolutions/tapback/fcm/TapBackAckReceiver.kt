@@ -23,7 +23,7 @@ class TapBackAckReceiver : BroadcastReceiver() {
                 if (session != null && baseUrl.isNotBlank()) {
                     app.api.ackAlert(baseUrl, session, alertId)
                 }
-                TapBackNotifications.cancelPing(context, alertId)
+                PingAlertService.stopAndClear(context, alertId)
             } catch (_: Exception) {
                 // Keep the notification so they can try again from the app.
             } finally {

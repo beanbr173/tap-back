@@ -70,4 +70,9 @@
     <string name="role_received">You received</string>
     <string name="app_version">Version %1$s</string>
     <string name="error_generic">Something went wrong. Try again.</string>
+    <string name="alert_setup_title">So check-ins can reach you</string>
+    <string name="alert_setup_body">Turn these on so a check-in covers the whole screen and still rings when this phone is on silent.</string>
+    <string name="alert_setup_overlay">Allow display over other apps</string>
+    <string name="alert_setup_fullscreen">Allow full-screen alerts</string>
+    <string name="alert_setup_battery">Allow unrestricted battery</string>
 </resources>

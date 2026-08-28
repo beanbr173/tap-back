@@ -1,5 +1,7 @@
 package com.kreativesolutions.tapback.fcm
 
+import android.app.ActivityOptions
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -7,7 +9,6 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.BitmapFactory
 import android.media.AudioAttributes
-import android.media.RingtoneManager
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -15,7 +16,7 @@ import com.kreativesolutions.tapback.PingOverlayActivity
 import com.kreativesolutions.tapback.R
 
 object TapBackNotifications {
-    const val CHANNEL_PINGS = "tapback_pings_v2"
+    const val CHANNEL_PINGS = "tapback_pings_v3"
     const val CHANNEL_ACKS = "tapback_acks"
     const val ACTION_ACK = "com.kreativesolutions.tapback.ACK_ALERT"
     const val EXTRA_ALERT_ID = "alert_id"
@@ -25,7 +26,8 @@ object TapBackNotifications {
     fun ensureChannels(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
-        val alarm = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+        manager.deleteNotificationChannel("tapback_pings")
+        manager.deleteNotificationChannel("tapback_pings_v2")
         val audio = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_ALARM)
             .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
@@ -39,9 +41,11 @@ object TapBackNotifications {
                 description = context.getString(R.string.notification_channel_pings_desc)
                 enableVibration(true)
                 vibrationPattern = longArrayOf(0, 400, 200, 400, 200, 400)
-                setSound(alarm, audio)
+                // Sound is played on the alarm stream by AlertSoundPlayer so it still
+                // rings when the phone is on silent. Channel sound would follow ringer volume.
+                setSound(null, audio)
                 setBypassDnd(true)
-                lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
+                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
                 setShowBadge(true)
             }
         )
@@ -60,15 +64,60 @@ object TapBackNotifications {
         return Intent(context, PingOverlayActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or
                 Intent.FLAG_ACTIVITY_CLEAR_TOP or
-                Intent.FLAG_ACTIVITY_SINGLE_TOP
+                Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                Intent.FLAG_ACTIVITY_NO_USER_ACTION
             putExtra(EXTRA_ALERT_ID, alertId)
             putExtra(EXTRA_FROM_NAME, fromName)
             putExtra(EXTRA_TYPE, "ping")
         }
     }
 
+    fun launchOverlay(context: Context, alertId: String, fromName: String) {
+        val intent = overlayIntent(context, alertId, fromName)
+        runCatching {
+            if (Build.VERSION.SDK_INT >= 34) {
+                val options = ActivityOptions.makeBasic().apply {
+                    setPendingIntentBackgroundActivityStartMode(
+                        ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
+                    )
+                }
+                context.startActivity(intent, options.toBundle())
+            } else {
+                context.startActivity(intent)
+            }
+        }
+    }
+
     fun showPing(context: Context, alertId: String, fromName: String) {
         ensureChannels(context)
+        runCatching {
+            PingAlertService.start(context, alertId, fromName)
+        }.onFailure {
+            AlertSoundPlayer.start(context)
+            notifyIfAllowed(
+                context,
+                alertId.hashCode(),
+                buildPingNotification(context, alertId, fromName, ringing = true)
+            )
+            launchOverlay(context, alertId, fromName)
+        }
+    }
+
+    fun showPingReminder(context: Context, alertId: String, fromName: String) {
+        ensureChannels(context)
+        notifyIfAllowed(
+            context,
+            alertId.hashCode(),
+            buildPingNotification(context, alertId, fromName, ringing = false)
+        )
+    }
+
+    fun buildPingNotification(
+        context: Context,
+        alertId: String,
+        fromName: String,
+        ringing: Boolean = true
+    ): Notification {
         val ackIntent = Intent(context, TapBackAckReceiver::class.java).apply {
             action = ACTION_ACK
             putExtra(EXTRA_ALERT_ID, alertId)
@@ -88,7 +137,7 @@ object TapBackNotifications {
         )
         val popupArt = BitmapFactory.decodeResource(context.resources, R.drawable.tapback_popup_art)
         val iconArt = BitmapFactory.decodeResource(context.resources, R.drawable.ic_launcher_art)
-        val notification = NotificationCompat.Builder(context, CHANNEL_PINGS)
+        return NotificationCompat.Builder(context, CHANNEL_PINGS)
             .setSmallIcon(R.drawable.ic_notification)
             .setLargeIcon(iconArt)
             .setContentTitle(context.getString(R.string.ping_title, fromName))
@@ -101,14 +150,16 @@ object TapBackNotifications {
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setAutoCancel(true)
-            .setContentIntent(ackPending)
+            .setOngoing(ringing)
+            .setAutoCancel(!ringing)
+            .setContentIntent(overlayPending)
             .addAction(0, context.getString(R.string.i_am_here), ackPending)
-            .setFullScreenIntent(overlayPending, true)
             .setTimeoutAfter(15 * 60 * 1000L)
+            .setSound(null)
+            .apply {
+                if (ringing) setFullScreenIntent(overlayPending, true)
+            }
             .build()
-        notifyIfAllowed(context, alertId.hashCode(), notification)
-        runCatching { context.startActivity(overlayIntent(context, alertId, fromName)) }
     }
 
     fun showAck(context: Context, fromName: String) {
@@ -126,13 +177,17 @@ object TapBackNotifications {
     }
 
     fun cancelPing(context: Context, alertId: String) {
-        NotificationManagerCompat.from(context).cancel(alertId.hashCode())
+        cancelPingId(context, alertId.hashCode())
+    }
+
+    fun cancelPingId(context: Context, id: Int) {
+        NotificationManagerCompat.from(context).cancel(id)
     }
 
     private fun notifyIfAllowed(
         context: Context,
         id: Int,
-        notification: android.app.Notification
+        notification: Notification
     ) {
         val manager = NotificationManagerCompat.from(context)
         if (Build.VERSION.SDK_INT >= 33 && !manager.areNotificationsEnabled()) return

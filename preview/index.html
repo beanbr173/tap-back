@@ -39,11 +39,13 @@
     }
     .phone {
       width: min(360px, 100%);
+      min-height: 640px;
       background: var(--card);
       border-radius: 28px;
       box-shadow: 0 16px 48px rgba(0, 0, 0, .45);
       border: 1px solid var(--border);
       overflow: hidden;
+      position: relative;
     }
     .status-bar {
       background: #102222;
@@ -73,15 +75,22 @@
     .btn.coral { background: var(--coral); color: #fff; font-size: 1.15rem; }
     .popup {
       display: none;
-      border-radius: 18px;
-      overflow: hidden;
-      background: #102222;
+      position: absolute;
+      inset: 0;
+      z-index: 5;
+      background: #0b1414;
       color: #fff;
+      flex-direction: column;
     }
-    .popup.show { display: block; }
-    .popup img { width: 100%; height: 180px; object-fit: cover; display: block; }
-    .popup-body { padding: 14px; }
-    .popup strong { display: block; margin-bottom: 4px; color: var(--primary); font-size: 1.15rem; }
+    .popup.show { display: flex; }
+    .popup img { width: 100%; flex: 1; object-fit: cover; display: block; min-height: 220px; }
+    .popup-body {
+      padding: 20px 18px 24px;
+      background: linear-gradient(transparent, #0b1414 28%);
+      margin-top: -80px;
+      position: relative;
+    }
+    .popup strong { display: block; margin-bottom: 8px; color: var(--primary); font-size: 1.45rem; }
     .log { font-size: .9rem; color: var(--muted); display: grid; gap: 8px; }
     .log div { border-bottom: 1px solid var(--border); padding-bottom: 8px; }
     .ok { color: var(--primary); font-weight: 600; }
@@ -91,7 +100,7 @@
   <div class="header">
     <img src="../branding/tapback-app-icon.png" alt="TapBack icon" />
     <h1>TapBack</h1>
-    <p>A tap that says I&rsquo;m here. Dark-mode preview of a family check-in: ping everyone, and a lock-screen popup they can ack without opening the app.</p>
+    <p>A tap that says I&rsquo;m here. Dark-mode preview of a family check-in: ping everyone, and a full-screen alert that still rings if the phone is on silent.</p>
   </div>
   <div class="phones">
     <div class="phone">
@@ -110,15 +119,16 @@
     </div>
     <div class="phone">
       <div class="status-bar">Alex (receiver)</div>
-      <div class="content">
-        <div class="popup" id="popup">
-          <img src="../branding/tapback-popup-art.png" alt="" />
-          <div class="popup-body">
-            <strong>Check-in from You</strong>
-            Tap to let them know you&rsquo;re here.
-            <button class="btn coral" id="ack">I&rsquo;m here</button>
-          </div>
+      <div class="popup" id="popup">
+        <img src="../branding/tapback-popup-art.png" alt="" />
+        <div class="popup-body">
+          <strong>Check-in from You</strong>
+          Tap to let them know you&rsquo;re here.
+          <button class="btn coral" id="ack">I&rsquo;m here</button>
+          <button class="btn" id="later" style="background:#1c2c2c;color:#b7c9c6;margin-top:8px">Later</button>
         </div>
+      </div>
+      <div class="content">
         <div class="card">
           <strong>Check-in log</strong>
           <div class="log" id="receiverLog"></div>
@@ -129,6 +139,7 @@
   <script>
     const send = document.getElementById("send");
     const ack = document.getElementById("ack");
+    const later = document.getElementById("later");
     const popup = document.getElementById("popup");
     const senderStatus = document.getElementById("senderStatus");
     const senderLog = document.getElementById("senderLog");
@@ -153,6 +164,10 @@
       senderStatus.innerHTML = `<span class="ok">They tapped back</span> at ${acked}`;
       senderLog.insertAdjacentHTML("afterbegin", `<div>You sent · on demand · tapped back<br>Sent ${sentAt} · Ack ${acked}</div>`);
       receiverLog.insertAdjacentHTML("afterbegin", `<div>You received · on demand · tapped back<br>Sent ${sentAt} · Ack ${acked}</div>`);
+    });
+
+    later.addEventListener("click", () => {
+      popup.classList.remove("show");
     });
   </script>
 </body>

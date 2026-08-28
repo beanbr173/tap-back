@@ -10,7 +10,7 @@ https://github.com/beanbr173/tap-back/releases/latest/download/tap-back.apk
 1. Everyone installs TapBack.
 2. One person creates a family code. Mom, a sister, anyone else — they all enter the **same** code. There is no limit on how many people can join.
 3. Tap **Check in with everyone**, or check in with one person.
-4. Their phones show a popup. Tapping it means "I'm here."
+4. Their phones show a **full-screen** alert and ring even if the phone is on silent. Tapping **I'm here** means they got it.
 5. You get a notification that they tapped back.
 6. Everyone keeps a log: sent, received, and acknowledged.
 7. Optional: a scheduled check-in for one person (or everyone), fired by the server even if the sender's phone is off.
@@ -83,6 +83,7 @@ Manual run: **Actions → Build APK → Run workflow**.
 1. Download [tap-back.apk](https://github.com/beanbr173/tap-back/releases/latest/download/tap-back.apk) on an Android 10+ phone.
 2. Allow installs from your browser or file app if prompted.
 3. Paste the Worker URL, enter your name, and join with a family code.
+4. On each receiving phone, tap **Allow display over other apps** (and full-screen alerts / unrestricted battery if shown). That is what lets a check-in cover the whole screen and still ring on silent.
 
 ## Browser preview
 
