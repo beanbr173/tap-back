@@ -106,6 +106,20 @@
     <div class="phone">
       <div class="status-bar">You (sender)</div>
       <div class="content">
+        <button class="btn" id="howtoOpen" style="display:none;background:#1c2c2c;color:var(--primary)">How to use TapBack</button>
+        <div class="card" id="howto">
+          <strong id="howtoStep" style="color:var(--primary)">1 of 6</strong>
+          <h3 id="howtoTitle" style="margin:10px 0 8px"></h3>
+          <p id="howtoBody" style="color:var(--muted);line-height:1.5;margin:0"></p>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;gap:8px">
+            <button class="btn" id="howtoSkip" style="width:auto;margin-top:0;background:#1c2c2c;color:var(--primary)">Skip</button>
+            <div style="display:flex;gap:8px">
+              <button class="btn" id="howtoBack" style="display:none;width:auto;margin-top:0;background:#1c2c2c;color:var(--primary)">Back</button>
+              <button class="btn" id="howtoNext" style="width:auto;margin-top:0">Next</button>
+            </div>
+          </div>
+        </div>
+        <div id="howtoRest" style="display:none">
         <div class="card">
           Family: <strong>Mom</strong>, <strong>Alex</strong>
           <button class="btn" id="send">Check in with everyone</button>
@@ -117,6 +131,7 @@
         <div class="card">
           <strong>Check-in log</strong>
           <div class="log" id="senderLog"></div>
+        </div>
         </div>
       </div>
     </div>
@@ -179,6 +194,55 @@
         ? `Joined another network with ${code}. Family is still here.`
         : "Enter a friend's code first.";
     });
+
+    const howtoPages = [
+      ["A tap that says I'm here", "TapBack is a check-in, not a text. You ping someone. Their phone lights up. They tap I'm here. You know they got it."],
+      ["Start with your name", "Enter the name family will see, then Continue. After that, either create a family code or type a code someone already sent you."],
+      ["One code for your family", "If you create a code, share it. Mom, a sister, anyone else types that same code on their phone after they install TapBack."],
+      ["Check in, then they tap back", "Tap Check in with everyone, or check in with one person. Their phone should cover the screen and ring even on silent."],
+      ["Let alerts reach this phone", "Turn on display over other apps, full-screen alerts, and unrestricted battery when those buttons appear."],
+      ["Friends, more family, later", "To join someone else's network without leaving yours, use Join another network. Open How to use TapBack anytime to see these cards again."]
+    ];
+    let howtoPage = 0;
+    const howto = document.getElementById("howto");
+    const howtoOpen = document.getElementById("howtoOpen");
+
+    const howtoRest = document.getElementById("howtoRest");
+
+    function renderHowto() {
+      const last = howtoPage === howtoPages.length - 1;
+      const [title, body] = howtoPages[howtoPage];
+      document.getElementById("howtoStep").textContent = `${howtoPage + 1} of ${howtoPages.length}`;
+      document.getElementById("howtoTitle").textContent = title;
+      document.getElementById("howtoBody").textContent = body;
+      document.getElementById("howtoBack").style.display = howtoPage > 0 ? "inline-block" : "none";
+      document.getElementById("howtoSkip").style.visibility = last ? "hidden" : "visible";
+      document.getElementById("howtoNext").textContent = last ? "Got it" : "Next";
+    }
+
+    function closeHowto() {
+      howto.style.display = "none";
+      howtoOpen.style.display = "block";
+      howtoRest.style.display = "grid";
+      howtoRest.style.gap = "14px";
+    }
+
+    document.getElementById("howtoNext").addEventListener("click", () => {
+      if (howtoPage === howtoPages.length - 1) closeHowto();
+      else { howtoPage += 1; renderHowto(); }
+    });
+    document.getElementById("howtoBack").addEventListener("click", () => {
+      if (howtoPage > 0) { howtoPage -= 1; renderHowto(); }
+    });
+    document.getElementById("howtoSkip").addEventListener("click", closeHowto);
+    howtoOpen.addEventListener("click", () => {
+      howtoPage = 0;
+      renderHowto();
+      howto.style.display = "block";
+      howtoOpen.style.display = "none";
+      howtoRest.style.display = "none";
+    });
+    renderHowto();
   </script>
 </body>
 </html>

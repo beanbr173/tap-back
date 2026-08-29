@@ -30,6 +30,8 @@ data class TapBackUiState(
     val schedules: List<ScheduleItem> = emptyList(),
     val busy: Boolean = false,
     val sending: Boolean = false,
+    val howToReady: Boolean = false,
+    val howToSeen: Boolean = false,
     val error: String? = null,
     val info: String? = null
 ) {
@@ -89,6 +91,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _state.value = _state.value.copy(inviteCode = value)
             }
         }
+        viewModelScope.launch {
+            settings.hasSeenHowTo.collect { value ->
+                _state.value = _state.value.copy(howToSeen = value, howToReady = true)
+            }
+        }
+    }
+
+    fun markHowToSeen() {
+        viewModelScope.launch { settings.setHasSeenHowTo(true) }
     }
 
     fun setApiBaseUrl(value: String) {

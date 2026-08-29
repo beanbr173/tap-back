@@ -84,4 +84,22 @@
     <string name="alert_setup_overlay">Allow display over other apps</string>
     <string name="alert_setup_fullscreen">Allow full-screen alerts</string>
     <string name="alert_setup_battery">Allow unrestricted battery</string>
+    <string name="howto_open">How to use TapBack</string>
+    <string name="howto_step">%1$d of %2$d</string>
+    <string name="howto_next">Next</string>
+    <string name="howto_back">Back</string>
+    <string name="howto_skip">Skip</string>
+    <string name="howto_done">Got it</string>
+    <string name="howto_1_title">A tap that says I\'m here</string>
+    <string name="howto_1_body">TapBack is a check-in, not a text. You ping someone. Their phone lights up. They tap I\'m here. You know they got it.</string>
+    <string name="howto_2_title">Start with your name</string>
+    <string name="howto_2_body">Enter the name family will see, then Continue. After that, either create a family code or type a code someone already sent you.</string>
+    <string name="howto_3_title">One code for your family</string>
+    <string name="howto_3_body">If you create a code, share it. Mom, a sister, anyone else types that same code on their phone after they install TapBack. You do not type their code unless you are joining their network.</string>
+    <string name="howto_4_title">Check in, then they tap back</string>
+    <string name="howto_4_body">Tap Check in with everyone, or check in with one person. Their phone should cover the screen and ring even on silent. They tap I\'m here. You get a notice that they tapped back.</string>
+    <string name="howto_5_title">Let alerts reach this phone</string>
+    <string name="howto_5_body">Turn on display over other apps, full-screen alerts, and unrestricted battery when those buttons appear. Without them, a check-in may only show as a small card at the top.</string>
+    <string name="howto_6_title">Friends, more family, later</string>
+    <string name="howto_6_body">To join someone else\'s network without leaving yours, use Join another network and enter their code. You can also set a check-in alarm. Open How to use TapBack anytime to see these cards again.</string>
 </resources>

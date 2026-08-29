@@ -108,6 +108,8 @@ private fun TapBackAppScreen(viewModel: MainViewModel) {
     var selectedDays by remember { mutableStateOf((0..6).toSet()) }
     var selectedTarget by remember { mutableStateOf<String?>(null) }
     var showAlarmPicker by remember { mutableStateOf(false) }
+    var reviewingHowTo by remember { mutableStateOf(false) }
+    val showHowTo = state.howToReady && (!state.howToSeen || reviewingHowTo)
 
     LaunchedEffect(state.displayName) {
         if (nameDraft.isBlank()) nameDraft = state.displayName
@@ -154,35 +156,51 @@ private fun TapBackAppScreen(viewModel: MainViewModel) {
             color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f)
         )
 
-        AlertSetupCard()
-
-        if (!state.error.isNullOrBlank()) {
-            Text(state.error ?: "", color = MaterialTheme.colorScheme.error)
-        }
-
-        ServerCard(
-            apiDraft = apiDraft,
-            onApiDraft = { apiDraft = it },
-            onSave = { viewModel.setApiBaseUrl(apiDraft) }
-        )
-
-        if (!state.isRegistered) {
-            SetupCard(
-                nameDraft = nameDraft,
-                onNameDraft = { nameDraft = it },
-                busy = state.busy,
-                onContinue = { viewModel.register(nameDraft) }
+        when {
+            !state.howToReady -> { }
+            showHowTo -> HowToWalkthrough(
+                onFinished = {
+                    viewModel.markHowToSeen()
+                    reviewingHowTo = false
+                }
             )
-        } else if (!state.isPaired) {
-            PairCard(
-                inviteCode = state.inviteCode,
-                joinCode = joinCode,
-                onJoinCode = { joinCode = it },
-                busy = state.busy,
-                onCreate = { viewModel.createInvite() },
-                onJoin = { viewModel.joinInvite(joinCode) }
+            else -> {
+            OutlinedButton(
+                onClick = { reviewingHowTo = true },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(stringResource(R.string.howto_open))
+            }
+
+            AlertSetupCard()
+
+            if (!state.error.isNullOrBlank()) {
+                Text(state.error ?: "", color = MaterialTheme.colorScheme.error)
+            }
+
+            ServerCard(
+                apiDraft = apiDraft,
+                onApiDraft = { apiDraft = it },
+                onSave = { viewModel.setApiBaseUrl(apiDraft) }
             )
-        } else {
+
+            if (!state.isRegistered) {
+                SetupCard(
+                    nameDraft = nameDraft,
+                    onNameDraft = { nameDraft = it },
+                    busy = state.busy,
+                    onContinue = { viewModel.register(nameDraft) }
+                )
+            } else if (!state.isPaired) {
+                PairCard(
+                    inviteCode = state.inviteCode,
+                    joinCode = joinCode,
+                    onJoinCode = { joinCode = it },
+                    busy = state.busy,
+                    onCreate = { viewModel.createInvite() },
+                    onJoin = { viewModel.joinInvite(joinCode) }
+                )
+            } else {
             HomeCard(
                 groups = state.groups,
                 selectedGroupId = state.pairId,
@@ -237,12 +255,14 @@ private fun TapBackAppScreen(viewModel: MainViewModel) {
                     }
                 )
             }
-            OutlinedButton(
-                onClick = { viewModel.unlink() },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = !state.busy
-            ) {
-                Text(stringResource(R.string.leave_network))
+                OutlinedButton(
+                    onClick = { viewModel.unlink() },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !state.busy
+                ) {
+                    Text(stringResource(R.string.leave_network))
+                }
+            }
             }
         }
 

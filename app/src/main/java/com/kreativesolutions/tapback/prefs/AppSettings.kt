@@ -3,6 +3,7 @@ package com.kreativesolutions.tapback.prefs
 import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -42,6 +43,10 @@ class AppSettings(private val context: Context) {
         prefs[KEY_INVITE_CODE].orEmpty()
     }
 
+    val hasSeenHowTo: Flow<Boolean> = context.tapBackStore.data.map { prefs ->
+        prefs[KEY_SEEN_HOWTO] == true
+    }
+
     suspend fun setApiBaseUrl(value: String) {
         context.tapBackStore.edit { it[KEY_API_BASE_URL] = value.trim() }
     }
@@ -74,6 +79,10 @@ class AppSettings(private val context: Context) {
         context.tapBackStore.edit { it[KEY_INVITE_CODE] = code }
     }
 
+    suspend fun setHasSeenHowTo(value: Boolean) {
+        context.tapBackStore.edit { it[KEY_SEEN_HOWTO] = value }
+    }
+
     suspend fun clearPair() {
         context.tapBackStore.edit { prefs ->
             prefs.remove(KEY_PAIR_ID)
@@ -90,5 +99,6 @@ class AppSettings(private val context: Context) {
         private val KEY_PAIR_ID = stringPreferencesKey("pair_id")
         private val KEY_PARTNER_NAME = stringPreferencesKey("partner_name")
         private val KEY_INVITE_CODE = stringPreferencesKey("invite_code")
+        private val KEY_SEEN_HOWTO = booleanPreferencesKey("seen_howto")
     }
 }
