@@ -11,8 +11,12 @@
     <string name="share_this_code">Share this code</string>
     <string name="waiting_for_partner">Waiting for someone to join…</string>
     <string name="send_check_in">Check in with everyone</string>
-    <string name="add_someone">Show code to add someone</string>
+    <string name="add_someone">Share this code</string>
     <string name="family_code">Family code</string>
+    <string name="family_code_help">Share this network\'s code. After they install TapBack and enter their name, they type it on their phone. To join someone else\'s network without leaving this one, use Join another network below.</string>
+    <string name="code_copied">Code copied</string>
+    <string name="share_code_message">Join my TapBack family with this code: %1$s</string>
+    <string name="get_family_code">Get a family code</string>
     <string name="nobody_yet">Nobody else has joined yet. Share the code so they can.</string>
     <string name="ping_one">Check in with %1$s</string>
     <string name="family_label">Your family</string>
@@ -48,6 +52,11 @@
     <string name="settings">Settings</string>
     <string name="api_url">Server URL</string>
     <string name="unlink">Leave this family</string>
+    <string name="leave_network">Leave this network</string>
+    <string name="your_networks">Your networks</string>
+    <string name="join_another_title">Join another network</string>
+    <string name="join_another_body">If a friend or sister sends you their code, enter it here. You stay in this family and also join theirs.</string>
+    <string name="join_another">Join this code</string>
     <string name="notifications_title">Allow notifications</string>
     <string name="notifications_body">TapBack needs notifications so a check-in can pop up on this phone.</string>
     <string name="allow_notifications">Allow notifications</string>

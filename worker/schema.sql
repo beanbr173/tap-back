@@ -9,7 +9,8 @@ CREATE TABLE IF NOT EXISTS devices (
 
 CREATE TABLE IF NOT EXISTS groups (
   id TEXT PRIMARY KEY,
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  name TEXT
 );
 
 CREATE TABLE IF NOT EXISTS group_members (

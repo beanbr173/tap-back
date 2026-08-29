@@ -110,6 +110,9 @@
           Family: <strong>Mom</strong>, <strong>Alex</strong>
           <button class="btn" id="send">Check in with everyone</button>
           <p id="senderStatus">No check-in sent yet.</p>
+          <p style="color:var(--muted);font-size:.9rem;margin:12px 0 0">Family code <strong style="color:var(--primary);font-size:1.2rem">JFYPM3</strong><br>Share this with family. To join a friend's network without leaving this one, enter their code below.</p>
+          <input id="joinOther" placeholder="Friend's code" style="width:100%;margin-top:10px;padding:10px;border-radius:10px;border:1px solid var(--border);background:#121c1c;color:var(--text)" />
+          <button class="btn" id="joinOtherBtn" style="background:#1c2c2c;color:var(--primary)">Join another network</button>
         </div>
         <div class="card">
           <strong>Check-in log</strong>
@@ -168,6 +171,13 @@
 
     later.addEventListener("click", () => {
       popup.classList.remove("show");
+    });
+
+    document.getElementById("joinOtherBtn").addEventListener("click", () => {
+      const code = document.getElementById("joinOther").value.trim();
+      senderStatus.textContent = code
+        ? `Joined another network with ${code}. Family is still here.`
+        : "Enter a friend's code first.";
     });
   </script>
 </body>

@@ -10,6 +10,7 @@ interface DeviceRow {
 
 interface GroupRow {
   id: string;
+  name: string | null;
 }
 
 interface AlertRow {
@@ -56,6 +57,7 @@ export default {
       return new Response(null, { headers: CORS });
     }
     try {
+      await ensureSchema(env);
       const url = new URL(request.url);
       const path = url.pathname.replace(/\/+$/, "") || "/";
       const response = await route(request, env, path);
@@ -90,13 +92,17 @@ async function route(request: Request, env: Env, path: string): Promise<Response
     return getMe(env, device);
   }
   if (request.method === "POST" && path === "/v1/invites") {
-    return createInvite(env, device);
+    return createInvite(request, env, device);
   }
   if (request.method === "POST" && path === "/v1/invites/join") {
     return joinInvite(request, env, device);
   }
   if (request.method === "DELETE" && (path === "/v1/pairs/me" || path === "/v1/groups/me")) {
-    return leaveGroup(env, device);
+    return leaveAllGroups(env, device);
+  }
+  const leaveOne = path.match(/^\/v1\/groups\/([^/]+)$/);
+  if (request.method === "DELETE" && leaveOne) {
+    return leaveOneGroup(env, device, leaveOne[1]);
   }
   if (request.method === "POST" && path === "/v1/alerts") {
     return createAlert(request, env, device, "manual");
@@ -157,11 +163,12 @@ async function updateDevice(request: Request, env: Env, device: DeviceRow): Prom
 }
 
 async function getMe(env: Env, device: DeviceRow): Promise<Response> {
-  const group = await serializeGroup(env, device.id);
-  const others = group?.members ?? [];
-  const first = others[0];
+  const groups = await serializeAllGroups(env, device.id);
+  const group = groups[0] || null;
+  const first = group?.members[0];
   return json({
     device: { id: device.id, displayName: device.display_name },
+    groups,
     group,
     pair: group && first
       ? { id: group.id, partnerId: first.id, partnerName: first.displayName }
@@ -169,8 +176,12 @@ async function getMe(env: Env, device: DeviceRow): Promise<Response> {
   });
 }
 
-async function createInvite(env: Env, device: DeviceRow): Promise<Response> {
-  const group = await ensureGroup(env, device.id);
+async function createInvite(request: Request, env: Env, device: DeviceRow): Promise<Response> {
+  const body = await readJson(request);
+  const requested = body.groupId ? String(body.groupId) : "";
+  const group = requested
+    ? await requireMembership(env, device.id, requested)
+    : await ensureGroup(env, device.id);
   const existing = await env.DB.prepare(
     `SELECT code, expires_at FROM invites
      WHERE group_id = ? AND (used_at IS NULL) AND expires_at > ?
@@ -179,7 +190,7 @@ async function createInvite(env: Env, device: DeviceRow): Promise<Response> {
     .bind(group.id, Date.now())
     .first<{ code: string; expires_at: number }>();
   if (existing) {
-    return json({ code: existing.code, expiresAt: existing.expires_at });
+    return json({ code: existing.code, expiresAt: existing.expires_at, groupId: group.id });
   }
   const code = randomCode();
   const now = Date.now();
@@ -189,7 +200,7 @@ async function createInvite(env: Env, device: DeviceRow): Promise<Response> {
   )
     .bind(code, device.id, group.id, now, expiresAt)
     .run();
-  return json({ code, expiresAt });
+  return json({ code, expiresAt, groupId: group.id });
 }
 
 async function joinInvite(request: Request, env: Env, device: DeviceRow): Promise<Response> {
@@ -210,23 +221,32 @@ async function joinInvite(request: Request, env: Env, device: DeviceRow): Promis
     await env.DB.prepare(`UPDATE invites SET group_id = ? WHERE code = ?`).bind(groupId, code).run();
   }
 
-  const current = await findGroup(env, device.id);
-  if (current && current.id !== groupId) {
-    throw new Error("You are already in a family. Leave it first to join another.");
-  }
-  if (!current) {
-    await env.DB.prepare(
-      `INSERT OR IGNORE INTO group_members (group_id, device_id, joined_at) VALUES (?, ?, ?)`
-    )
-      .bind(groupId, device.id, Date.now())
-      .run();
-  }
-  const group = await serializeGroup(env, device.id);
-  return json({ group, pair: legacyPair(group) });
+  await env.DB.prepare(
+    `INSERT OR IGNORE INTO group_members (group_id, device_id, joined_at) VALUES (?, ?, ?)`
+  )
+    .bind(groupId, device.id, Date.now())
+    .run();
+  const group = await serializeGroupById(env, groupId, device.id);
+  const groups = await serializeAllGroups(env, device.id);
+  return json({ group, groups, pair: legacyPair(groups[0] || null) });
 }
 
-async function leaveGroup(env: Env, device: DeviceRow): Promise<Response> {
-  const group = await findGroup(env, device.id);
+async function leaveOneGroup(env: Env, device: DeviceRow, groupId: string): Promise<Response> {
+  await requireMembership(env, device.id, groupId);
+  await env.DB.prepare(`DELETE FROM group_members WHERE group_id = ? AND device_id = ?`)
+    .bind(groupId, device.id)
+    .run();
+  await env.DB.prepare(
+    `DELETE FROM schedules WHERE pair_id = ? AND (sender_id = ? OR receiver_id = ?)`
+  )
+    .bind(groupId, device.id, device.id)
+    .run();
+  await maybeDeleteEmptyGroup(env, groupId);
+  return json({ ok: true, groups: await serializeAllGroups(env, device.id) });
+}
+
+async function leaveAllGroups(env: Env, device: DeviceRow): Promise<Response> {
+  const groups = await findGroups(env, device.id);
   await env.DB.prepare(`DELETE FROM group_members WHERE device_id = ?`).bind(device.id).run();
   await env.DB.prepare(`DELETE FROM pairs WHERE device_a = ? OR device_b = ?`)
     .bind(device.id, device.id)
@@ -234,16 +254,8 @@ async function leaveGroup(env: Env, device: DeviceRow): Promise<Response> {
   await env.DB.prepare(`DELETE FROM schedules WHERE sender_id = ? OR receiver_id = ?`)
     .bind(device.id, device.id)
     .run();
-  if (group) {
-    const remaining = await env.DB.prepare(
-      `SELECT COUNT(*) AS n FROM group_members WHERE group_id = ?`
-    )
-      .bind(group.id)
-      .first<{ n: number }>();
-    if (!remaining || remaining.n === 0) {
-      await env.DB.prepare(`DELETE FROM groups WHERE id = ?`).bind(group.id).run();
-      await env.DB.prepare(`DELETE FROM invites WHERE group_id = ?`).bind(group.id).run();
-    }
+  for (const group of groups) {
+    await maybeDeleteEmptyGroup(env, group.id);
   }
   return json({ ok: true });
 }
@@ -255,10 +267,10 @@ async function createAlert(
   kind: string
 ): Promise<Response> {
   const body = await readJson(request);
-  const group = await requireGroup(env, device.id);
-  const groupId = String(body.groupId || body.pairId || group.id);
-  if (groupId !== group.id) throw new Error("You are not in that family.");
-  const members = await listMembers(env, group.id);
+  const requestedGroupId = String(body.groupId || body.pairId || "");
+  const groupId = requestedGroupId || (await requireGroup(env, device.id)).id;
+  await requireMembership(env, device.id, groupId);
+  const members = await listMembers(env, groupId);
   const requested = body.receiverId ? String(body.receiverId) : "";
   const targets = members.filter((member) => {
     if (member.id === device.id) return false;
@@ -269,7 +281,7 @@ async function createAlert(
 
   const alerts = [];
   for (const target of targets) {
-    const alert = await insertAlert(env, group.id, device.id, target.id, kind);
+    const alert = await insertAlert(env, groupId, device.id, target.id, kind);
     alerts.push(alert);
     await sendFcm(env, target.fcm_token, {
       type: "ping",
@@ -286,8 +298,7 @@ async function createAlert(
 }
 
 async function listAlerts(env: Env, device: DeviceRow): Promise<Response> {
-  const group = await findGroup(env, device.id);
-  const members = group ? await listMembers(env, group.id) : [];
+  const names = await allMemberNames(env, device.id);
   const rows = await env.DB.prepare(
     `SELECT * FROM alerts
      WHERE sender_id = ? OR receiver_id = ?
@@ -296,7 +307,6 @@ async function listAlerts(env: Env, device: DeviceRow): Promise<Response> {
   )
     .bind(device.id, device.id)
     .all<AlertRow>();
-  const names = nameMap(members);
   return json({ alerts: (rows.results || []).map((row) => serializeAlert(row, names)) });
 }
 
@@ -338,9 +348,7 @@ async function ackAlert(env: Env, device: DeviceRow, alertId: string): Promise<R
 }
 
 async function listSchedules(env: Env, device: DeviceRow): Promise<Response> {
-  const group = await findGroup(env, device.id);
-  const members = group ? await listMembers(env, group.id) : [];
-  const names = nameMap(members);
+  const names = await allMemberNames(env, device.id);
   const rows = await env.DB.prepare(
     `SELECT * FROM schedules WHERE sender_id = ? OR receiver_id = ? OR (pair_id IN (SELECT group_id FROM group_members WHERE device_id = ?) AND receiver_id = ?)
      ORDER BY hour, minute`
@@ -352,7 +360,9 @@ async function listSchedules(env: Env, device: DeviceRow): Promise<Response> {
 
 async function createSchedule(request: Request, env: Env, device: DeviceRow): Promise<Response> {
   const body = await readJson(request);
-  const group = await requireGroup(env, device.id);
+  const requested = String(body.groupId || body.pairId || "");
+  const groupId = requested || (await requireGroup(env, device.id)).id;
+  await requireMembership(env, device.id, groupId);
   const hour = Number(body.hour);
   const minute = Number(body.minute);
   if (!Number.isInteger(hour) || hour < 0 || hour > 23) throw new Error("hour must be 0-23.");
@@ -361,7 +371,7 @@ async function createSchedule(request: Request, env: Env, device: DeviceRow): Pr
   const days = Array.isArray(body.days) ? body.days.map(Number) : [0, 1, 2, 3, 4, 5, 6];
   const receiverId = body.receiverId ? String(body.receiverId) : EVERYONE;
   if (receiverId !== EVERYONE) {
-    const members = await listMembers(env, group.id);
+    const members = await listMembers(env, groupId);
     if (!members.some((member) => member.id === receiverId && member.id !== device.id)) {
       throw new Error("Pick someone in your family.");
     }
@@ -372,12 +382,12 @@ async function createSchedule(request: Request, env: Env, device: DeviceRow): Pr
       (id, pair_id, sender_id, receiver_id, hour, minute, timezone, days_mask, enabled, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`
   )
-    .bind(id, group.id, device.id, receiverId, hour, minute, timezone, daysToMask(days), Date.now())
+    .bind(id, groupId, device.id, receiverId, hour, minute, timezone, daysToMask(days), Date.now())
     .run();
   const row = await env.DB.prepare(`SELECT * FROM schedules WHERE id = ?`)
     .bind(id)
     .first<ScheduleRow>();
-  const members = await listMembers(env, group.id);
+  const members = await listMembers(env, groupId);
   return json({ schedule: serializeSchedule(row!, nameMap(members)) });
 }
 
@@ -476,29 +486,33 @@ async function ensureGroup(env: Env, deviceId: string): Promise<GroupRow> {
   const existing = await findGroup(env, deviceId);
   if (existing) return existing;
   const now = Date.now();
+  const device = await getDevice(env, deviceId);
+  const name = familyName(device?.display_name || "Family");
   const oldPair = await env.DB.prepare(
     `SELECT id, device_a, device_b, created_at FROM pairs WHERE device_a = ? OR device_b = ?`
   )
     .bind(deviceId, deviceId)
     .first<{ id: string; device_a: string; device_b: string; created_at: number }>();
   if (oldPair) {
-    await env.DB.prepare(`INSERT OR IGNORE INTO groups (id, created_at) VALUES (?, ?)`).bind(oldPair.id, oldPair.created_at).run();
+    await env.DB.prepare(`INSERT OR IGNORE INTO groups (id, created_at, name) VALUES (?, ?, ?)`)
+      .bind(oldPair.id, oldPair.created_at, name)
+      .run();
     await env.DB.prepare(
       `INSERT OR IGNORE INTO group_members (group_id, device_id, joined_at) VALUES (?, ?, ?)`
     ).bind(oldPair.id, oldPair.device_a, oldPair.created_at).run();
     await env.DB.prepare(
       `INSERT OR IGNORE INTO group_members (group_id, device_id, joined_at) VALUES (?, ?, ?)`
     ).bind(oldPair.id, oldPair.device_b, oldPair.created_at).run();
-    return { id: oldPair.id };
+    return { id: oldPair.id, name };
   }
   const id = crypto.randomUUID();
   await env.DB.batch([
-    env.DB.prepare(`INSERT INTO groups (id, created_at) VALUES (?, ?)`).bind(id, now),
+    env.DB.prepare(`INSERT INTO groups (id, created_at, name) VALUES (?, ?, ?)`).bind(id, now, name),
     env.DB.prepare(
       `INSERT INTO group_members (group_id, device_id, joined_at) VALUES (?, ?, ?)`
     ).bind(id, deviceId, now),
   ]);
-  return { id };
+  return { id, name };
 }
 
 async function requireGroup(env: Env, deviceId: string): Promise<GroupRow> {
@@ -507,27 +521,62 @@ async function requireGroup(env: Env, deviceId: string): Promise<GroupRow> {
   return group;
 }
 
-async function findGroup(env: Env, deviceId: string): Promise<GroupRow | null> {
+async function requireMembership(env: Env, deviceId: string, groupId: string): Promise<GroupRow> {
   const row = await env.DB.prepare(
-    `SELECT group_id AS id FROM group_members WHERE device_id = ? LIMIT 1`
+    `SELECT g.id, g.name FROM groups g
+     JOIN group_members m ON m.group_id = g.id
+     WHERE g.id = ? AND m.device_id = ?`
+  )
+    .bind(groupId, deviceId)
+    .first<{ id: string; name: string | null }>();
+  if (!row) throw new Error("You are not in that family.");
+  return row;
+}
+
+async function findGroups(env: Env, deviceId: string): Promise<GroupRow[]> {
+  const rows = await env.DB.prepare(
+    `SELECT g.id, g.name
+     FROM groups g
+     JOIN group_members m ON m.group_id = g.id
+     WHERE m.device_id = ?
+     ORDER BY m.joined_at`
   )
     .bind(deviceId)
-    .first<{ id: string }>();
-  if (row) return row;
+    .all<{ id: string; name: string | null }>();
+  return rows.results || [];
+}
+
+async function findGroup(env: Env, deviceId: string): Promise<GroupRow | null> {
+  const groups = await findGroups(env, deviceId);
+  if (groups[0]) return groups[0];
   const pair = await env.DB.prepare(
     `SELECT id, device_a, device_b, created_at FROM pairs WHERE device_a = ? OR device_b = ?`
   )
     .bind(deviceId, deviceId)
     .first<{ id: string; device_a: string; device_b: string; created_at: number }>();
   if (!pair) return null;
-  await env.DB.prepare(`INSERT OR IGNORE INTO groups (id, created_at) VALUES (?, ?)`).bind(pair.id, pair.created_at).run();
+  await env.DB.prepare(`INSERT OR IGNORE INTO groups (id, created_at) VALUES (?, ?)`)
+    .bind(pair.id, pair.created_at)
+    .run();
   await env.DB.prepare(
     `INSERT OR IGNORE INTO group_members (group_id, device_id, joined_at) VALUES (?, ?, ?)`
   ).bind(pair.id, pair.device_a, pair.created_at).run();
   await env.DB.prepare(
     `INSERT OR IGNORE INTO group_members (group_id, device_id, joined_at) VALUES (?, ?, ?)`
   ).bind(pair.id, pair.device_b, pair.created_at).run();
-  return { id: pair.id };
+  return { id: pair.id, name: null };
+}
+
+async function maybeDeleteEmptyGroup(env: Env, groupId: string): Promise<void> {
+  const remaining = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM group_members WHERE group_id = ?`
+  )
+    .bind(groupId)
+    .first<{ n: number }>();
+  if (!remaining || remaining.n === 0) {
+    await env.DB.prepare(`DELETE FROM groups WHERE id = ?`).bind(groupId).run();
+    await env.DB.prepare(`DELETE FROM invites WHERE group_id = ?`).bind(groupId).run();
+  }
 }
 
 async function listMembers(env: Env, groupId: string): Promise<MemberRow[]> {
@@ -543,17 +592,36 @@ async function listMembers(env: Env, groupId: string): Promise<MemberRow[]> {
   return rows.results || [];
 }
 
+async function serializeAllGroups(env: Env, deviceId: string) {
+  const groups = await findGroups(env, deviceId);
+  const result = [];
+  for (const group of groups) {
+    const serialized = await serializeGroupById(env, group.id, deviceId);
+    if (serialized) result.push(serialized);
+  }
+  return result;
+}
+
 async function serializeGroup(env: Env, deviceId: string) {
-  const group = await findGroup(env, deviceId);
+  const groups = await serializeAllGroups(env, deviceId);
+  return groups[0] || null;
+}
+
+async function serializeGroupById(env: Env, groupId: string, deviceId: string) {
+  const group = await env.DB.prepare(`SELECT id, name FROM groups WHERE id = ?`)
+    .bind(groupId)
+    .first<{ id: string; name: string | null }>();
   if (!group) return null;
-  const members = await listMembers(env, group.id);
+  const members = await listMembers(env, groupId);
   const invite = await env.DB.prepare(
     `SELECT code FROM invites WHERE group_id = ? AND expires_at > ? ORDER BY created_at DESC LIMIT 1`
   )
-    .bind(group.id, Date.now())
+    .bind(groupId, Date.now())
     .first<{ code: string }>();
+  const founder = members[0]?.display_name || "Family";
   return {
     id: group.id,
+    name: (group.name || "").trim() || familyName(founder),
     inviteCode: invite?.code || "",
     members: members
       .filter((member) => member.id !== deviceId)
@@ -561,10 +629,32 @@ async function serializeGroup(env: Env, deviceId: string) {
   };
 }
 
-function legacyPair(group: Awaited<ReturnType<typeof serializeGroup>>) {
+function familyName(displayName: string): string {
+  const trimmed = displayName.trim() || "Family";
+  return trimmed.endsWith("family") ? trimmed : `${trimmed}'s family`;
+}
+
+function legacyPair(group: Awaited<ReturnType<typeof serializeGroupById>> | { id: string; members: { id: string; displayName: string }[] } | null) {
   const first = group?.members[0];
   if (!group || !first) return null;
   return { id: group.id, partnerId: first.id, partnerName: first.displayName };
+}
+
+async function allMemberNames(env: Env, deviceId: string): Promise<Record<string, string>> {
+  const groups = await findGroups(env, deviceId);
+  const names: Record<string, string> = {};
+  for (const group of groups) {
+    Object.assign(names, nameMap(await listMembers(env, group.id)));
+  }
+  return names;
+}
+
+let schemaReady = false;
+
+async function ensureSchema(env: Env): Promise<void> {
+  if (schemaReady) return;
+  await env.DB.prepare(`ALTER TABLE groups ADD COLUMN name TEXT`).run().catch(() => undefined);
+  schemaReady = true;
 }
 
 async function requireDevice(request: Request, env: Env): Promise<DeviceRow> {

@@ -13,9 +13,15 @@ data class Member(
 
 data class GroupInfo(
     val groupId: String,
+    val name: String,
     val inviteCode: String,
     val members: List<Member>
-)
+) {
+    val partnerLabel: String
+        get() = name.ifBlank {
+            members.joinToString(", ") { it.displayName }.ifBlank { "your family" }
+        }
+}
 
 data class PairInfo(
     val pairId: String,
@@ -26,6 +32,7 @@ data class PairInfo(
 data class MeSnapshot(
     val deviceId: String,
     val displayName: String,
+    val groups: List<GroupInfo>,
     val group: GroupInfo?,
     val pair: PairInfo?
 )

@@ -1,14 +1,19 @@
 package com.kreativesolutions.tapback
 
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -49,6 +54,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.kreativesolutions.tapback.api.AlertLog
+import com.kreativesolutions.tapback.api.GroupInfo
 import com.kreativesolutions.tapback.api.Member
 import com.kreativesolutions.tapback.api.ScheduleItem
 import com.kreativesolutions.tapback.fcm.AlertSetup
@@ -178,6 +184,8 @@ private fun TapBackAppScreen(viewModel: MainViewModel) {
             )
         } else {
             HomeCard(
+                groups = state.groups,
+                selectedGroupId = state.pairId,
                 partnerName = state.partnerName,
                 members = state.members,
                 inviteCode = state.inviteCode,
@@ -185,14 +193,25 @@ private fun TapBackAppScreen(viewModel: MainViewModel) {
                 incoming = state.latestIncomingUnacked,
                 deviceId = state.deviceId,
                 busy = state.busy,
+                sending = state.sending,
+                joinCode = joinCode,
+                onJoinCode = { joinCode = it },
+                onJoinNetwork = {
+                    viewModel.joinInvite(joinCode)
+                    joinCode = ""
+                },
+                onSelectGroup = { id ->
+                    selectedTarget = null
+                    viewModel.selectGroup(id)
+                },
                 onSendEveryone = { viewModel.sendCheckIn() },
                 onSendOne = { id -> viewModel.sendCheckIn(id) },
-                onAddSomeone = { viewModel.createInvite() },
+                onEnsureCode = { viewModel.createInvite() },
                 onAck = { id -> viewModel.ack(id) }
             )
-            LogCard(alerts = state.alerts, deviceId = state.deviceId)
+            LogCard(alerts = state.networkAlerts, deviceId = state.deviceId)
             ScheduleCard(
-                schedules = state.schedules,
+                schedules = state.networkSchedules,
                 members = state.members,
                 selectedDays = selectedDays,
                 selectedTarget = selectedTarget,
@@ -223,7 +242,7 @@ private fun TapBackAppScreen(viewModel: MainViewModel) {
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !state.busy
             ) {
-                Text(stringResource(R.string.unlink))
+                Text(stringResource(R.string.leave_network))
             }
         }
 
@@ -389,6 +408,8 @@ private fun PairCard(
 
 @Composable
 private fun HomeCard(
+    groups: List<GroupInfo>,
+    selectedGroupId: String,
     partnerName: String,
     members: List<Member>,
     inviteCode: String,
@@ -396,13 +417,39 @@ private fun HomeCard(
     incoming: AlertLog?,
     deviceId: String,
     busy: Boolean,
+    sending: Boolean,
+    joinCode: String,
+    onJoinCode: (String) -> Unit,
+    onJoinNetwork: () -> Unit,
+    onSelectGroup: (String) -> Unit,
     onSendEveryone: () -> Unit,
     onSendOne: (String) -> Unit,
-    onAddSomeone: () -> Unit,
+    onEnsureCode: () -> Unit,
     onAck: (String) -> Unit
 ) {
+    val context = LocalContext.current
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (groups.size > 1) {
+                Text(stringResource(R.string.your_networks), fontWeight = FontWeight.SemiBold)
+                groups.forEach { group ->
+                    val selected = group.groupId == selectedGroupId
+                    TextButton(
+                        onClick = { onSelectGroup(group.groupId) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = group.partnerLabel,
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                            color = if (selected) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
+                            }
+                        )
+                    }
+                }
+            }
             Text(
                 text = stringResource(
                     R.string.partner_label,
@@ -421,7 +468,7 @@ private fun HomeCard(
                     enabled = !busy,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text(if (busy) stringResource(R.string.sending) else stringResource(R.string.send_check_in))
+                    Text(if (sending) stringResource(R.string.sending) else stringResource(R.string.send_check_in))
                 }
                 members.forEach { member ->
                     OutlinedButton(
@@ -433,21 +480,69 @@ private fun HomeCard(
                     }
                 }
             }
+            Text(stringResource(R.string.family_code), style = MaterialTheme.typography.bodySmall)
             if (inviteCode.isNotBlank()) {
-                Text(stringResource(R.string.family_code), style = MaterialTheme.typography.bodySmall)
                 Text(
                     text = inviteCode,
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.clickable {
+                        val clipboard = context.getSystemService(ClipboardManager::class.java)
+                        clipboard?.setPrimaryClip(ClipData.newPlainText("TapBack", inviteCode))
+                        Toast.makeText(context, R.string.code_copied, Toast.LENGTH_SHORT).show()
+                    }
                 )
+                Text(
+                    text = stringResource(R.string.family_code_help),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                OutlinedButton(
+                    onClick = {
+                        val share = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(
+                                Intent.EXTRA_TEXT,
+                                context.getString(R.string.share_code_message, inviteCode)
+                            )
+                        }
+                        context.startActivity(Intent.createChooser(share, null))
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(stringResource(R.string.add_someone))
+                }
+            } else {
+                Text(
+                    text = stringResource(R.string.family_code_help),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                OutlinedButton(
+                    onClick = onEnsureCode,
+                    enabled = !busy,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(stringResource(R.string.get_family_code))
+                }
             }
+            Text(stringResource(R.string.join_another_title), fontWeight = FontWeight.Medium)
+            Text(
+                stringResource(R.string.join_another_body),
+                style = MaterialTheme.typography.bodyMedium
+            )
+            OutlinedTextField(
+                value = joinCode,
+                onValueChange = { onJoinCode(it.uppercase()) },
+                label = { Text(stringResource(R.string.enter_code)) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
             OutlinedButton(
-                onClick = onAddSomeone,
-                enabled = !busy,
+                onClick = onJoinNetwork,
+                enabled = !busy && joinCode.isNotBlank(),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text(stringResource(R.string.add_someone))
+                Text(stringResource(R.string.join_another))
             }
             if (incoming != null) {
                 Text("They checked in on you. Tap to say you're here.")

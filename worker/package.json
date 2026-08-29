@@ -6,7 +6,8 @@
     "deploy": "wrangler deploy",
     "db:create": "wrangler d1 create tapback",
     "db:migrate": "wrangler d1 execute tapback --remote --file=./schema.sql",
-    "db:migrate:local": "wrangler d1 execute tapback --local --file=./schema.sql"
+    "db:migrate:local": "wrangler d1 execute tapback --local --file=./schema.sql",
+    "db:add-group-name": "wrangler d1 execute tapback --remote --file=./migrate-group-name.sql"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "latest",

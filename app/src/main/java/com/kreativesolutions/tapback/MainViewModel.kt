@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.kreativesolutions.tapback.api.AlertLog
 import com.kreativesolutions.tapback.api.DeviceSession
+import com.kreativesolutions.tapback.api.GroupInfo
 import com.kreativesolutions.tapback.api.Member
 import com.kreativesolutions.tapback.api.ScheduleItem
 import kotlinx.coroutines.Job
@@ -23,19 +24,27 @@ data class TapBackUiState(
     val pairId: String = "",
     val partnerName: String = "",
     val inviteCode: String = "",
+    val groups: List<GroupInfo> = emptyList(),
     val members: List<Member> = emptyList(),
     val alerts: List<AlertLog> = emptyList(),
     val schedules: List<ScheduleItem> = emptyList(),
     val busy: Boolean = false,
+    val sending: Boolean = false,
     val error: String? = null,
     val info: String? = null
 ) {
     val isRegistered: Boolean get() = deviceId.isNotBlank()
-    val isPaired: Boolean get() = pairId.isNotBlank()
+    val isPaired: Boolean get() = pairId.isNotBlank() || groups.isNotEmpty()
+    val selectedGroup: GroupInfo?
+        get() = groups.find { it.groupId == pairId } ?: groups.firstOrNull()
+    val networkAlerts: List<AlertLog>
+        get() = if (pairId.isBlank()) alerts else alerts.filter { it.pairId == pairId }
+    val networkSchedules: List<ScheduleItem>
+        get() = if (pairId.isBlank()) schedules else schedules.filter { it.pairId == pairId }
     val latestOutgoing: AlertLog?
-        get() = alerts.firstOrNull { it.senderId == deviceId }
+        get() = networkAlerts.firstOrNull { it.senderId == deviceId }
     val latestIncomingUnacked: AlertLog?
-        get() = alerts.firstOrNull { it.receiverId == deviceId && it.ackedAt == null }
+        get() = networkAlerts.firstOrNull { it.receiverId == deviceId && it.ackedAt == null }
 }
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -86,6 +95,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { settings.setApiBaseUrl(value) }
     }
 
+    fun selectGroup(groupId: String) {
+        val group = _state.value.groups.find { it.groupId == groupId } ?: return
+        viewModelScope.launch { applyGroup(group) }
+    }
+
     fun register(displayName: String) {
         runAction {
             val name = displayName.trim()
@@ -101,7 +115,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun createInvite() {
         runAction {
-            val invite = api.createInvite(requireBaseUrl(), requireSession())
+            val invite = api.createInvite(
+                requireBaseUrl(),
+                requireSession(),
+                _state.value.pairId.ifBlank { null }
+            )
             settings.setInviteCode(invite.code)
             refreshNow()
         }
@@ -110,15 +128,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun joinInvite(code: String) {
         runAction {
             val group = api.joinInvite(requireBaseUrl(), requireSession(), code)
-            applyGroup(group.groupId, group.members, group.inviteCode.ifBlank { code.trim().uppercase() })
+            applyGroup(group)
             refreshNow()
+            val latest = _state.value.groups.find { it.groupId == group.groupId } ?: group
+            applyGroup(latest)
         }
     }
 
     fun sendCheckIn(receiverId: String? = null) {
-        runAction {
-            val groupId = _state.value.pairId
-            require(groupId.isNotBlank()) { "Connect with your family first." }
+        runAction(sending = true) {
+            val groupId = selectedGroupId()
             require(_state.value.members.isNotEmpty()) { "Nobody else has joined yet." }
             api.sendAlert(requireBaseUrl(), requireSession(), groupId, receiverId)
             refreshNow()
@@ -134,8 +153,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun addSchedule(hour: Int, minute: Int, days: List<Int>, receiverId: String?) {
         runAction {
-            val groupId = _state.value.pairId
-            require(groupId.isNotBlank()) { "Connect with your family first." }
+            val groupId = selectedGroupId()
             require(days.isNotEmpty()) { "Pick at least one day." }
             require(!receiverId.isNullOrBlank()) { "Pick who this alarm is for." }
             api.createSchedule(
@@ -168,13 +186,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun unlink() {
         runAction {
-            runCatching { api.unlink(requireBaseUrl(), requireSession()) }
-            settings.clearPair()
-            _state.value = _state.value.copy(
-                members = emptyList(),
-                alerts = emptyList(),
-                schedules = emptyList()
-            )
+            val groupId = _state.value.pairId.ifBlank { null }
+            runCatching { api.unlink(requireBaseUrl(), requireSession(), groupId) }
+            refreshNow()
+            if (_state.value.groups.isEmpty()) {
+                settings.clearPair()
+                _state.value = _state.value.copy(
+                    members = emptyList(),
+                    alerts = emptyList(),
+                    schedules = emptyList(),
+                    inviteCode = ""
+                )
+            }
         }
     }
 
@@ -204,29 +227,50 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val baseUrl = settings.apiBaseUrl.first()
         if (baseUrl.isBlank()) return
         val me = api.me(baseUrl, session)
-        if (me.group != null) {
-            applyGroup(me.group.groupId, me.group.members, me.group.inviteCode)
+        val groups = me.groups
+        val preferredId = settings.pairId.first()
+        val selected = groups.find { it.groupId == preferredId } ?: groups.firstOrNull()
+        if (selected != null) {
+            applyGroup(selected)
+        } else {
+            settings.clearPair()
+            _state.value = _state.value.copy(members = emptyList(), inviteCode = "")
         }
         val alerts = api.listAlerts(baseUrl, session)
         val schedules = runCatching { api.listSchedules(baseUrl, session) }.getOrDefault(emptyList())
-        _state.value = _state.value.copy(alerts = alerts, schedules = schedules, error = null)
+        _state.value = _state.value.copy(
+            groups = groups,
+            alerts = alerts,
+            schedules = schedules,
+            error = null
+        )
     }
 
-    private suspend fun applyGroup(groupId: String, members: List<Member>, inviteCode: String) {
-        val names = members.joinToString(", ") { it.displayName }.ifBlank { "your family" }
-        settings.setGroup(groupId, names, inviteCode.ifBlank { null })
-        _state.value = _state.value.copy(members = members)
+    private suspend fun applyGroup(group: GroupInfo) {
+        settings.setGroup(group.groupId, group.partnerLabel, group.inviteCode.ifBlank { null })
+        _state.value = _state.value.copy(
+            pairId = group.groupId,
+            partnerName = group.partnerLabel,
+            inviteCode = group.inviteCode,
+            members = group.members
+        )
     }
 
-    private fun runAction(block: suspend () -> Unit) {
+    private fun selectedGroupId(): String {
+        val groupId = _state.value.pairId
+        require(groupId.isNotBlank()) { "Connect with your family first." }
+        return groupId
+    }
+
+    private fun runAction(sending: Boolean = false, block: suspend () -> Unit) {
         viewModelScope.launch {
-            _state.value = _state.value.copy(busy = true, error = null, info = null)
+            _state.value = _state.value.copy(busy = true, sending = sending, error = null, info = null)
             try {
                 block()
             } catch (error: Exception) {
                 _state.value = _state.value.copy(error = error.message ?: "Something went wrong.")
             } finally {
-                _state.value = _state.value.copy(busy = false)
+                _state.value = _state.value.copy(busy = false, sending = false)
             }
         }
     }

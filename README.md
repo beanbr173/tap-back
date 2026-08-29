@@ -14,6 +14,7 @@ https://github.com/beanbr173/tap-back/releases/latest/download/tap-back.apk
 5. You get a notification that they tapped back.
 6. Everyone keeps a log: sent, received, and acknowledged.
 7. Optional: a scheduled check-in for one person (or everyone), fired by the server even if the sender's phone is off.
+8. You can belong to more than one network. If a friend sends you their code, enter it under **Join another network**. You stay in your family and also join theirs. Check-ins stay inside the network you have selected.
 
 ## Hosting — this can stay free
 

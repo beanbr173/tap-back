@@ -45,9 +45,15 @@ class TapBackApi(
         put(baseUrl, "/v1/devices/me", body, auth)
     }
 
-    suspend fun createInvite(baseUrl: String, auth: DeviceSession): InviteCode =
+    suspend fun createInvite(
+        baseUrl: String,
+        auth: DeviceSession,
+        groupId: String? = null
+    ): InviteCode =
         withContext(Dispatchers.IO) {
-            val json = post(baseUrl, "/v1/invites", JSONObject(), auth)
+            val body = JSONObject()
+            if (!groupId.isNullOrBlank()) body.put("groupId", groupId)
+            val json = post(baseUrl, "/v1/invites", body, auth)
             InviteCode(
                 code = json.getString("code"),
                 expiresAt = json.getLong("expiresAt")
@@ -70,12 +76,25 @@ class TapBackApi(
     suspend fun me(baseUrl: String, auth: DeviceSession): MeSnapshot =
         withContext(Dispatchers.IO) {
             val json = get(baseUrl, "/v1/me", auth)
+            val groupsJson = json.optJSONArray("groups")
+            val parsedGroups = if (groupsJson != null) {
+                buildList {
+                    for (i in 0 until groupsJson.length()) {
+                        add(parseGroup(groupsJson.getJSONObject(i)))
+                    }
+                }
+            } else {
+                emptyList()
+            }
             val groupObj = json.optJSONObject("group")
             val pairObj = json.optJSONObject("pair")
+            val fallback = groupObj?.let { parseGroup(it) } ?: pairObj?.let { pairToGroup(it) }
+            val groups = parsedGroups.ifEmpty { listOfNotNull(fallback) }
             MeSnapshot(
                 deviceId = json.getJSONObject("device").getString("id"),
                 displayName = json.getJSONObject("device").getString("displayName"),
-                group = groupObj?.let { parseGroup(it) } ?: pairObj?.let { pairToGroup(it) },
+                groups = groups,
+                group = groups.firstOrNull(),
                 pair = pairObj?.let { parsePair(it) }
             )
         }
@@ -156,9 +175,11 @@ class TapBackApi(
             delete(baseUrl, "/v1/schedules/$scheduleId", auth)
         }
 
-    suspend fun unlink(baseUrl: String, auth: DeviceSession) = withContext(Dispatchers.IO) {
-        delete(baseUrl, "/v1/pairs/me", auth)
-    }
+    suspend fun unlink(baseUrl: String, auth: DeviceSession, groupId: String? = null) =
+        withContext(Dispatchers.IO) {
+            val path = if (groupId.isNullOrBlank()) "/v1/pairs/me" else "/v1/groups/$groupId"
+            delete(baseUrl, path, auth)
+        }
 
     private fun parsePair(json: JSONObject) = PairInfo(
         pairId = json.getString("id"),
@@ -168,6 +189,7 @@ class TapBackApi(
 
     private fun pairToGroup(json: JSONObject) = GroupInfo(
         groupId = json.getString("id"),
+        name = json.optString("partnerName").ifBlank { "Family" },
         inviteCode = "",
         members = listOf(
             Member(id = json.getString("partnerId"), displayName = json.getString("partnerName"))
@@ -182,8 +204,10 @@ class TapBackApi(
                 add(Member(id = member.getString("id"), displayName = member.getString("displayName")))
             }
         }
+        val id = json.optString("id").ifBlank { json.optString("groupId") }
         return GroupInfo(
-            groupId = json.getString("id"),
+            groupId = id,
+            name = json.optString("name"),
             inviteCode = json.optString("inviteCode"),
             members = members
         )
